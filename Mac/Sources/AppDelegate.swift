@@ -95,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let settings = NSMenu()
+        settings.autoenablesItems = false
         func item(_ title: String, _ sel: Selector?, on: Bool = false, enabled: Bool = true, in target: NSMenu? = nil) {
             let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
             i.target = self

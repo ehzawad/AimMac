@@ -133,6 +133,8 @@ final class TrackpadUIView: UIView {
             return
         }
         cancelHold()
+        // A fingertip rolls a little during a real tap, but past this it was a move.
+        if travel > 6 { tapEligible = false }
         if tapThenDrag, !dragging {
             dragging = true
             tapEligible = false

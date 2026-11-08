@@ -39,7 +39,7 @@ final class KeyCaptureUIView: UITextView, UITextViewDelegate {
     /// What the Mac has been sent so far.
     private var sent = ""
     private var seenEpoch = 0
-    private let longestBuffer = 400
+    private let longestBuffer = 2000
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
@@ -104,8 +104,7 @@ final class KeyCaptureUIView: UITextView, UITextViewDelegate {
     func startFresh(for epoch: Int) {
         guard epoch != seenEpoch else { return }
         seenEpoch = epoch
-        guard markedTextRange == nil else { return }
-        text = ""
+        text = ""  // also abandons anything half-composed, which has nowhere to go now
         sent = ""
     }
 
