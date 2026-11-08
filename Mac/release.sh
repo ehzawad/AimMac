@@ -31,7 +31,7 @@ hdiutil create -quiet -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO "$DM
 rm -rf "$STAGE"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 
-echo "Notarizing $DMG…"
+echo "Notarizing ${DMG}"
 xcrun notarytool submit "$DMG" \
   --key "$HOME/.appstoreconnect/private_keys/AuthKey_$NOTARY_KEY_ID.p8" \
   --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --wait
