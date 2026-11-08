@@ -69,6 +69,7 @@ final class InputEngine: @unchecked Sendable {
             if !on {
                 releaseAll { _ in true }
                 discardMotion()
+                endScrollPhases()
             }
             enabled = on
         }
@@ -79,6 +80,7 @@ final class InputEngine: @unchecked Sendable {
         queue.sync {
             releaseAll { _ in true }
             discardMotion()
+            endScrollPhases()
         }
     }
 
@@ -102,7 +104,7 @@ final class InputEngine: @unchecked Sendable {
     /// The real trackpad moved. Reported only for events we didn't post ourselves.
     func noteHardwareMotion(dx: Double, dy: Double) {
         queue.async { [self] in
-            guard timer != nil else { return }
+            guard timer != nil || CFAbsoluteTimeGetCurrent() - lastPostTime < 0.15 else { return }
             hardwareX += dx
             hardwareY += dy
         }
@@ -239,6 +241,7 @@ final class InputEngine: @unchecked Sendable {
     /// Lets go of anything this device was holding.
     func cancel(source id: String) {
         queue.async { [self] in
+            endScrollPhases()
             guard held.values.contains(id) else { return }
             releaseAll { $0 == id }
             discardMotion()
@@ -339,15 +342,23 @@ final class InputEngine: @unchecked Sendable {
                 scrollPhase = .began
                 momentumPhase = .none
             case .fingersEnded:
-                if scrollPhase != nil { postScroll(0, 0, scroll: .ended, momentum: .none) }
+                if scrollPhase == .changed { postScroll(0, 0, scroll: .ended, momentum: .none) }
                 scrollPhase = nil
             case .momentumBegan:
                 momentumPhase = .begin
             case .momentumEnded:
-                if momentumPhase != .none { postScroll(0, 0, scroll: nil, momentum: .end) }
+                if momentumPhase == .continuous { postScroll(0, 0, scroll: nil, momentum: .end) }
                 momentumPhase = .none
             }
         }
+    }
+
+    /// A scroll must never be left open, or the app under it keeps waiting for the end.
+    private func endScrollPhases() {
+        if scrollPhase == .changed { postScroll(0, 0, scroll: .ended, momentum: .none) }
+        if momentumPhase == .continuous { postScroll(0, 0, scroll: nil, momentum: .end) }
+        scrollPhase = nil
+        momentumPhase = .none
     }
 
     private func postScroll(_ wheelX: Int32, _ wheelY: Int32, scroll: CGScrollPhase?, momentum: CGMomentumScrollPhase) {

@@ -45,9 +45,9 @@ final class PointerHalo: NSObject {
     func noteMotion() {
         guard isEnabled else { return }
         lastMotion = CFAbsoluteTimeGetCurrent()
+        followCursor()  // even if the display it was on has just gone away
         guard !visible else { return }
         visible = true
-        followCursor()
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.1

@@ -38,6 +38,7 @@ final class RemoteSession {
 
     private func caretMoved() {
         typedPreview = ""
+        composing = ""
         typingEpoch &+= 1
     }
     private(set) var dragging = false
@@ -54,7 +55,8 @@ final class RemoteSession {
             modifiers = []
         }
         // The keyboard only ever opens from its button, so a reconnect mustn't bring it back.
-        if link.state != .ready && !demo { keyboardShown = false }
+        // While the Mac is paused nothing typed would arrive, so it closes then too.
+        if (link.state != .ready || link.macPaused) && !demo { keyboardShown = false }
     }
 
     // MARK: trackpad
@@ -97,6 +99,12 @@ final class RemoteSession {
     func toggleRotationLock() {
         rotationLocked.toggle()
         RotationLock.set(locked: rotationLocked)
+    }
+
+    /// The lock button only exists on the trackpad, so leaving it can't leave the lock on.
+    func unlockRotation() {
+        guard rotationLocked else { return }
+        toggleRotationLock()
     }
 
     // MARK: gestures
@@ -156,17 +164,20 @@ final class RemoteSession {
         for character in text {
             if character.isNewline {
                 flushPlain()
-                press(MacKey.returnKey)
-            } else if !modifiers.isEmpty, let chord = MacKey.chord(for: character) {
+                // Only the preview starts over: dictation can still revise what came before.
+                link.key(MacKey.returnKey, modifiers: modifiers)
+                modifiers = []
+                typedPreview = ""
+            } else if !modifiers.subtracting(.shift).isEmpty, let chord = MacKey.chord(for: character) {
                 // With ⌘ or friends it's a shortcut, which needs the real key.
                 flushPlain()
                 link.key(chord.code, modifiers: chord.shift ? modifiers.union(.shift) : modifiers)
                 modifiers = []
                 caretMoved()
             } else {
-                // A modifier only ever applies to the very next key, even one with no shortcut.
+                // Shift alone is just typing. A modifier only ever applies to the very next key.
+                plain += modifiers == .shift ? character.uppercased() : String(character)
                 modifiers = []
-                plain.append(character)
             }
         }
         flushPlain()

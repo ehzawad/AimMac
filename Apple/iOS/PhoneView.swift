@@ -185,6 +185,7 @@ struct RemoteView: View {
                 .accessibilityHidden(true)
         }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .onDisappear { session.unlockRotation() }
     }
 
     private var portraitLayout: some View {
@@ -319,6 +320,7 @@ struct RemoteView: View {
                 .background(session.keyboardShown ? mint.opacity(0.18) : panel, in: RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
+        .disabled(session.link.macPaused)
     }
 
     private var compactKeyboardButton: some View {
@@ -329,6 +331,7 @@ struct RemoteView: View {
                 .background(session.keyboardShown ? mint.opacity(0.18) : panel, in: RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+        .disabled(session.link.macPaused)
     }
 }
 
