@@ -62,6 +62,8 @@ final class InputEngine: @unchecked Sendable {
     private var clickCount = 0
     private var scrollRemainderX = 0.0
     private var scrollRemainderY = 0.0
+    private var scrollPhase: CGScrollPhase?
+    private var momentumPhase = CGMomentumScrollPhase.none
 
     // MARK: setup
 
@@ -330,13 +332,41 @@ final class InputEngine: @unchecked Sendable {
             scrollRemainderX -= x
             scrollRemainderY -= y
             // Int32(exactly:) keeps an extreme value from trapping.
-            guard let wheelX = Int32(exactly: x), let wheelY = Int32(exactly: y),
-                  let ev = CGEvent(scrollWheelEvent2Source: eventSource, units: .pixel, wheelCount: 2,
-                                   wheel1: wheelY, wheel2: wheelX, wheel3: 0) else { return }
-            // Marks it as trackpad-style scrolling, so apps scroll smoothly.
-            ev.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
-            ev.post(tap: .cghidEventTap)
+            guard let wheelX = Int32(exactly: x), let wheelY = Int32(exactly: y) else { return }
+            postScroll(wheelX, wheelY, scroll: scrollPhase, momentum: momentumPhase)
+            if scrollPhase == .began { scrollPhase = .changed }
+            if momentumPhase == .begin { momentumPhase = .continuous }
         }
+    }
+
+    /// Marking where a scroll is in its life is what gives apps a real trackpad's
+    /// smooth scrolling, rubber-banding and momentum.
+    func scrollSignal(_ signal: ScrollSignal) {
+        queue.async { [self] in
+            guard enabled else { return }
+            switch signal {
+            case .fingersBegan:
+                scrollPhase = .began
+                momentumPhase = .none
+            case .fingersEnded:
+                if scrollPhase != nil { postScroll(0, 0, scroll: .ended, momentum: .none) }
+                scrollPhase = nil
+            case .momentumBegan:
+                momentumPhase = .begin
+            case .momentumEnded:
+                if momentumPhase != .none { postScroll(0, 0, scroll: nil, momentum: .end) }
+                momentumPhase = .none
+            }
+        }
+    }
+
+    private func postScroll(_ wheelX: Int32, _ wheelY: Int32, scroll: CGScrollPhase?, momentum: CGMomentumScrollPhase) {
+        guard let ev = CGEvent(scrollWheelEvent2Source: eventSource, units: .pixel, wheelCount: 2,
+                               wheel1: wheelY, wheel2: wheelX, wheel3: 0) else { return }
+        ev.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        ev.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(scroll?.rawValue ?? 0))
+        ev.setIntegerValueField(.scrollWheelEventMomentumPhase, value: Int64(momentum.rawValue))
+        ev.post(tap: .cghidEventTap)
     }
 
     // MARK: keyboard
@@ -363,6 +393,11 @@ final class InputEngine: @unchecked Sendable {
             if modifiers.contains(.option) { flags.insert(.maskAlternate) }
             if modifiers.contains(.control) { flags.insert(.maskControl) }
             if modifiers.contains(.shift) { flags.insert(.maskShift) }
+            // Arrow keys carry these flags on a real keyboard, and system shortcuts look for them.
+            if (MacKey.left...MacKey.up).contains(code) {
+                flags.insert(.maskSecondaryFn)
+                flags.insert(.maskNumericPad)
+            }
             for down in [true, false] {
                 guard let ev = CGEvent(keyboardEventSource: eventSource, virtualKey: CGKeyCode(code), keyDown: down) else { continue }
                 ev.flags = flags

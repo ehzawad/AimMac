@@ -24,6 +24,7 @@ final class RemoteSession {
     /// ⌘ ⌥ ⌃ ⇧ waiting for the next key.
     private(set) var modifiers: KeyModifiers = []
     private(set) var dragging = false
+    private(set) var rotationLocked = false
     @ObservationIgnored private var leaseTask: Task<Void, Never>?
 
     init() {
@@ -70,6 +71,39 @@ final class RemoteSession {
         leaseTask?.cancel()
         leaseTask = nil
         link.button(.left, down: false)
+    }
+
+    // MARK: rotation
+
+    func toggleRotationLock() {
+        rotationLocked.toggle()
+        RotationLock.set(locked: rotationLocked)
+    }
+
+    // MARK: gestures
+
+    // macOS has no public way to post a real swipe or pinch, so these use the
+    // shortcuts behind the same system features.
+
+    func swipe(_ direction: TrackpadSwipe) {
+        DeviceInfo.haptic()
+        switch direction {
+        case .left: link.key(MacKey.right, modifiers: .control)   // next Space, as on a Mac trackpad
+        case .right: link.key(MacKey.left, modifiers: .control)
+        case .up: link.key(MacKey.up, modifiers: .control)        // Mission Control
+        case .down: link.key(MacKey.down, modifiers: .control)    // App Exposé
+        }
+    }
+
+    func pinch(zoomIn: Bool) {
+        DeviceInfo.haptic()
+        link.key(zoomIn ? MacKey.equals : MacKey.minus, modifiers: .command)
+    }
+
+    /// The Mac's force click: look up what's under the pointer.
+    func lookUp() {
+        DeviceInfo.strongHaptic()
+        link.key(MacKey.d, modifiers: [.control, .command])
     }
 
     // MARK: keyboard

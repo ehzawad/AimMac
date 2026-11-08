@@ -228,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
         case let .text(s): engine.type(s)
         case let .key(code, mods): engine.key(code, modifiers: mods)
         case .keepAlive: engine.keepAlive(source: peer.key)
+        case let .scrollSignal(signal): engine.scrollSignal(signal)
         }
     }
 

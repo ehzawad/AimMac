@@ -138,6 +138,13 @@ final class MacLink: NSObject {
         enqueue(w.data)
     }
 
+    func scrollSignal(_ signal: ScrollSignal) {
+        guard isLive else { return }
+        var w = PacketWriter(.phase)
+        w.u8(signal.rawValue)
+        enqueue(w.data)
+    }
+
     func keepAlive() {
         guard isLive else { return }
         enqueue(PacketWriter(.alive).data)
@@ -532,7 +539,9 @@ extension MacLink: @MainActor CBPeripheralDelegate {
 @MainActor
 enum DeviceInfo {
     private static let hapticGenerator = UIImpactFeedbackGenerator(style: .light)
+    private static let strongHapticGenerator = UIImpactFeedbackGenerator(style: .rigid)
     static func haptic() { hapticGenerator.impactOccurred() }
+    static func strongHaptic() { strongHapticGenerator.impactOccurred() }
 
     /// Hardware identifier such as "iPhone16,2".
     static var model: String {

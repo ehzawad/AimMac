@@ -10,6 +10,7 @@ enum InputEvent {
     case text(String)
     case key(code: UInt8, modifiers: KeyModifiers)
     case keepAlive
+    case scrollSignal(ScrollSignal)
 }
 
 struct Peer {
@@ -290,6 +291,8 @@ final class Receiver: NSObject, @MainActor CBPeripheralManagerDelegate {
             } else { event = nil }
         case .alive:
             event = .keepAlive
+        case .phase:
+            event = r.u8().flatMap(ScrollSignal.init(rawValue:)).map(InputEvent.scrollSignal)
         default:
             event = nil
         }

@@ -15,13 +15,18 @@ No Wi-Fi and no servers: the phone talks straight to the Mac over Bluetooth, and
 | Slide one finger | Move the pointer |
 | Tap | Click |
 | Tap, then slide | Drag |
+| Hold one finger still | Look up, with a strong haptic in place of a force click |
 | Slide two fingers | Scroll, with momentum |
+| Pinch two fingers | Zoom in or out (⌘+ and ⌘−) |
 | Tap with two fingers | Right-click |
+| Swipe three fingers left or right | Switch Spaces |
+| Swipe three fingers up or down | Mission Control or App Exposé |
+| Tap with three fingers | Look up |
 | **Keyboard** button | Type with the iPhone keyboard |
 
 The keyboard only opens from its button. While it's up, a row of keys gives you esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows; a modifier applies to the next key you press.
 
-Turn the phone sideways for a wide trackpad with the controls in a slim column; the keyboard works in both orientations. Your real trackpad keeps working the whole time.
+Use it upright or turn the phone sideways for a wide trackpad with the controls in a slim column, and tap the rotation lock to stay in either one. The keyboard works in both. Your real trackpad keeps working the whole time.
 
 - **Pairing with a code.** The first time a phone connects, both screens show a six-digit code and the Mac asks you to allow it. Only allow it if the codes match.
 - **Notch panel.** Hover the notch (or the middle of the menu bar) to see the connected phone, its battery and quick buttons. Pin it to keep it open.
