@@ -28,16 +28,6 @@ final class InputEngine: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var lastTick = 0.0
 
-    /// Our own event stream, separate from the buttons and keys you are physically holding.
-    private let eventSource: CGEventSource? = {
-        let s = CGEventSource(stateID: .privateState)
-        s?.localEventsSuppressionInterval = 0
-        s?.setLocalEventsFilterDuringSuppressionState(
-            [.permitLocalMouseEvents, .permitLocalKeyboardEvents, .permitSystemDefinedEvents],
-            state: .eventSuppressionStateSuppressionInterval)
-        return s
-    }()
-
     private var map = DisplayMap(rects: [.zero])
     private var settings = Settings()
     private var enabled = true
@@ -186,7 +176,7 @@ final class InputEngine: @unchecked Sendable {
         } else {
             (type, button) = (.mouseMoved, .left)
         }
-        guard let ev = CGEvent(mouseEventSource: eventSource, mouseType: type,
+        guard let ev = CGEvent(mouseEventSource: nil, mouseType: type,
                                mouseCursorPosition: p, mouseButton: button) else { return }
         // Whole-pixel deltas for apps that read them, carrying the fractions forward.
         deltaRemainderX += dx
@@ -311,7 +301,7 @@ final class InputEngine: @unchecked Sendable {
         case (.right, true): type = .rightMouseDown
         case (.right, false): type = .rightMouseUp
         }
-        guard let ev = CGEvent(mouseEventSource: eventSource, mouseType: type, mouseCursorPosition: p,
+        guard let ev = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p,
                                mouseButton: button == .left ? .left : .right) else { return }
         ev.setIntegerValueField(.mouseEventClickState, value: Int64(clicks))
         ev.setIntegerValueField(.eventSourceUserData, value: Self.syntheticTag)
@@ -361,7 +351,7 @@ final class InputEngine: @unchecked Sendable {
     }
 
     private func postScroll(_ wheelX: Int32, _ wheelY: Int32, scroll: CGScrollPhase?, momentum: CGMomentumScrollPhase) {
-        guard let ev = CGEvent(scrollWheelEvent2Source: eventSource, units: .pixel, wheelCount: 2,
+        guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
                                wheel1: wheelY, wheel2: wheelX, wheel3: 0) else { return }
         ev.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
         ev.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(scroll?.rawValue ?? 0))
@@ -377,7 +367,7 @@ final class InputEngine: @unchecked Sendable {
             for character in text {
                 let units = Array(String(character).utf16)
                 for down in [true, false] {
-                    guard let ev = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: down) else { continue }
+                    guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) else { continue }
                     ev.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
                     ev.post(tap: .cghidEventTap)
                 }
@@ -399,7 +389,7 @@ final class InputEngine: @unchecked Sendable {
                 flags.insert(.maskNumericPad)
             }
             for down in [true, false] {
-                guard let ev = CGEvent(keyboardEventSource: eventSource, virtualKey: CGKeyCode(code), keyDown: down) else { continue }
+                guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: down) else { continue }
                 ev.flags = flags
                 ev.post(tap: .cghidEventTap)
             }

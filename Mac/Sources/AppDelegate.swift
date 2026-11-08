@@ -29,13 +29,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
         get { defaults.bool(forKey: "reverseScroll") }
         set { defaults.set(newValue, forKey: "reverseScroll"); applySettings() }
     }
+    var roundPointer: Bool {
+        get { defaults.bool(forKey: "roundPointer") }
+        set { defaults.set(newValue, forKey: "roundPointer"); applySettings() }
+    }
     var paused = false
 
+    private let halo = PointerHalo()
+    private var askedForAccessibility = false
     private var trustAlert: NSAlert?
     private var trustDecision: (@MainActor (Bool) -> Void)?
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        defaults.register(defaults: ["speedIdx": 1, "smoothingIdx": 1, "reverseScroll": false])
+        defaults.register(defaults: ["speedIdx": 1, "smoothingIdx": 1, "reverseScroll": false, "roundPointer": true])
         if !(0..<speeds.count).contains(speedIdx) { speedIdx = 1 }
         if !(0..<smoothing.count).contains(smoothingIdx) { smoothingIdx = 1 }
 
@@ -79,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
     }
 
     private func applySettings() {
+        halo.isEnabled = roundPointer
         engine.configure(displays: DisplayMap.current(), settings: InputEngine.Settings(
             speed: speeds[max(0, min(speeds.count - 1, speedIdx))],
             smoothing: smoothing[max(0, min(smoothing.count - 1, smoothingIdx))],
@@ -126,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
         choices("Speed", speedNames, selected: speedIdx, action: #selector(setSpeed(_:)))
         choices("Smoothing", smoothingNames, selected: smoothingIdx, action: #selector(setSmoothing(_:)))
         item("Reverse scrolling", #selector(toggleReverseScroll), on: reverseScroll)
+        item("Round pointer while moving", #selector(toggleRoundPointer), on: roundPointer)
         menu.addItem(.separator())
         item("Play the target game", #selector(openGame))
         item("Forget paired devices (\(receiver.trustedCount))", #selector(forget), enabled: receiver.trustedCount > 0)
@@ -161,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
     @objc func setSpeed(_ s: NSMenuItem) { speedIdx = s.tag }
     @objc func setSmoothing(_ s: NSMenuItem) { smoothingIdx = s.tag }
     @objc func toggleReverseScroll() { reverseScroll.toggle() }
+    @objc func toggleRoundPointer() { roundPointer.toggle() }
     @objc func forget() { receiver.forgetAll() }
     @objc func quitApp() { NSApp.terminate(nil) }
 
@@ -218,10 +227,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
 
     // MARK: ReceiverDelegate
 
+    /// macOS can let an untrusted app move the pointer while dropping its
+    /// clicks and keys, so the first one checks that the permission is there.
+    private func askForAccessibilityIfNeeded() {
+        guard !AXIsProcessTrusted(), !askedForAccessibility else { return }
+        askedForAccessibility = true
+        openAX()
+    }
+
     func receiver(_ r: Receiver, peer: Peer, event: InputEvent) {
         guard !paused else { return }
         switch event {
-        case let .move(dx, dy): engine.move(dx: dx, dy: dy)
+        case .buttonDown, .key, .text: askForAccessibilityIfNeeded()
+        default: break
+        }
+        switch event {
+        case let .move(dx, dy):
+            engine.move(dx: dx, dy: dy)
+            halo.noteMotion()
         case let .buttonDown(b, startsDrag): engine.buttonDown(b, startsDrag: startsDrag, source: peer.key)
         case let .buttonUp(b): engine.buttonUp(b, source: peer.key)
         case let .scroll(dx, dy): engine.scroll(dx: dx, dy: dy)

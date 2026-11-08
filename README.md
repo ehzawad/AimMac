@@ -24,7 +24,7 @@ No Wi-Fi and no servers: the phone talks straight to the Mac over Bluetooth, and
 | Tap with three fingers | Look up |
 | **Keyboard** button | Type with the iPhone keyboard |
 
-The keyboard only opens from its button. While it's up, a row of keys gives you esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows; a modifier applies to the next key you press.
+The keyboard only opens from its button. While it's up, a row of keys gives you esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows; a modifier applies to the next key you press. What you type or dictate shows just above the keys, so you can catch mistakes from across the room.
 
 Use it upright or turn the phone sideways for a wide trackpad with the controls in a slim column, and tap the rotation lock to stay in either one. The keyboard works in both. Your real trackpad keeps working the whole time.
 
@@ -67,7 +67,7 @@ open AimMac.xcodeproj
 
 ## Settings
 
-Speed, smoothing and scroll direction are in the Orbit Pointer menu on the Mac.
+Speed, smoothing, scroll direction and the round pointer are in the Orbit Pointer menu on the Mac. The round pointer is a circle that appears around the arrow while the phone is moving it, so it's easy to spot from a distance.
 
 ## Orbit Pop
 
