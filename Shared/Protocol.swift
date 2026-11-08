@@ -18,6 +18,7 @@
 //   text    0C  utf8                                 typed characters
 //   key     0D  code:u8 modifiers:u8                 macOS virtual key code
 //   alive   0E                                       still holding a button (see InputEngine's lease)
+//   phase   0F  signal:u8                            where a scroll is in its life (see ScrollSignal)
 //
 // Status (Mac -> phone, read + notify)
 //   state:u8 (0 waiting for approval, 1 approved, 2 denied, 3 challenge ready)  paused:u8  macName:utf8
@@ -51,6 +52,7 @@ enum PacketKind: UInt8 {
     case text = 0x0C
     case key = 0x0D
     case alive = 0x0E
+    case phase = 0x0F
     case sealed = 0x10
 }
 
@@ -60,6 +62,11 @@ enum LinkState: UInt8 {
 
 enum MouseButton: UInt8, Sendable {
     case left = 0, right = 1
+}
+
+/// Lets the Mac mark scrolling the way a real trackpad does.
+enum ScrollSignal: UInt8, Sendable {
+    case fingersBegan = 1, fingersEnded, momentumBegan, momentumEnded
 }
 
 struct KeyModifiers: OptionSet, Sendable, Hashable {
@@ -80,6 +87,9 @@ enum MacKey {
     static let right: UInt8 = 124
     static let down: UInt8 = 125
     static let up: UInt8 = 126
+    static let d: UInt8 = 2
+    static let equals: UInt8 = 24
+    static let minus: UInt8 = 27
 
     private static let table: [Character: UInt8] = [
         "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,

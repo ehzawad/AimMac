@@ -192,6 +192,7 @@ struct RemoteView: View {
             HStack(spacing: 8) {
                 status
                 Spacer()
+                rotationLockButton
                 headerControl
             }
             trackpad
@@ -211,13 +212,28 @@ struct RemoteView: View {
                             .allowsHitTesting(false)
                     }
                 VStack(spacing: 8) {
-                    headerControl
+                    // With the keyboard up there's only room for the button that closes it.
+                    if !session.keyboardShown {
+                        headerControl
+                        rotationLockButton
+                    }
                     compactKeyboardButton
                 }
                 .frame(width: 64)
             }
             if session.keyboardShown { KeyRow() }
         }
+    }
+
+    private var rotationLockButton: some View {
+        Button { session.toggleRotationLock() } label: {
+            Image(systemName: session.rotationLocked ? "lock.rotation" : "lock.open.rotation")
+                .font(.title3)
+                .foregroundStyle(session.rotationLocked ? mint : Color.white)
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(session.rotationLocked ? "Unlock rotation" : "Lock rotation")
     }
 
     private var status: some View {
@@ -264,9 +280,10 @@ struct RemoteView: View {
             .overlay {
                 if !session.keyboardShown {
                     VStack(spacing: 6) {
-                        Text("One finger moves · tap clicks")
-                        Text("Two fingers scroll · two-finger tap right-clicks")
-                        Text("Tap, then slide to drag")
+                        Text("One finger moves · tap clicks · tap, then slide to drag")
+                        Text("Two fingers scroll or pinch · two-finger tap right-clicks")
+                        Text("Three fingers switch Spaces · up for Mission Control")
+                        Text("Hold still to look up")
                     }
                     .font(.footnote)
                     .foregroundStyle(.tertiary)
@@ -277,14 +294,7 @@ struct RemoteView: View {
             }
             .overlay { TrackpadSurface(session: session) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityElement()
-            .accessibilityLabel("Trackpad")
-            .accessibilityHint("Touch directly to move and tap to click, or use the actions rotor for click and scroll.")
-            .accessibilityAddTraits([.isButton, .allowsDirectInteraction])
-            .accessibilityAction { session.click(.left) }
-            .accessibilityAction(named: "Right click") { session.click(.right) }
-            .accessibilityAction(named: "Scroll up") { session.link.scroll(dx: 0, dy: 120) }
-            .accessibilityAction(named: "Scroll down") { session.link.scroll(dx: 0, dy: -120) }
+            .modifier(TrackpadAccessibility(session: session))
     }
 
     private var keyboardLabel: some View {
@@ -310,6 +320,31 @@ struct RemoteView: View {
                 .background(session.keyboardShown ? mint.opacity(0.18) : panel, in: RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Every trackpad gesture, available through VoiceOver's actions rotor.
+struct TrackpadAccessibility: ViewModifier {
+    let session: RemoteSession
+
+    func body(content: Content) -> some View {
+        let element = content
+            .accessibilityElement()
+            .accessibilityLabel("Trackpad")
+            .accessibilityHint("Touch directly to move and tap to click, or use the actions rotor for click and scroll.")
+            .accessibilityAddTraits([.isButton, .allowsDirectInteraction])
+        let pointing = element
+            .accessibilityAction { session.click(.left) }
+            .accessibilityAction(named: "Right click") { session.click(.right) }
+            .accessibilityAction(named: "Look up") { session.lookUp() }
+        let scrolling = pointing
+            .accessibilityAction(named: "Scroll up") { session.link.scroll(dx: 0, dy: 120) }
+            .accessibilityAction(named: "Scroll down") { session.link.scroll(dx: 0, dy: -120) }
+        return scrolling
+            .accessibilityAction(named: "Mission Control") { session.swipe(.up) }
+            .accessibilityAction(named: "App Exposé") { session.swipe(.down) }
+            .accessibilityAction(named: "Next Space") { session.swipe(.left) }
+            .accessibilityAction(named: "Previous Space") { session.swipe(.right) }
     }
 }
 
