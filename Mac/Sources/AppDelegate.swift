@@ -1,11 +1,11 @@
 import AppKit
 import ApplicationServices
+import ServiceManagement
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ReceiverDelegate {
     let engine = InputEngine()
     let receiver = Receiver()
-    let notch = NotchPanel()
     let defaults = UserDefaults.standard
 
     var statusItem: NSStatusItem!
@@ -49,6 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = "OrbitPointer"  // keeps the place you drag it to
+        statusItem.button?.toolTip = "Orbit Pointer"
         setIcon()
         menu.delegate = self
         menu.autoenablesItems = false
@@ -73,11 +75,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
 
         receiver.delegate = self
         receiver.start()
-
-        notch.model = { [weak self] in self?.notchModel() ?? NotchModel() }
-        notch.onPause = { [weak self] in self?.togglePause() }
-        notch.onGame = { [weak self] in self?.openGame() }
-        notch.show()
     }
 
     func applicationWillTerminate(_ n: Notification) {
@@ -97,12 +94,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        func item(_ title: String, _ sel: Selector?, on: Bool = false, enabled: Bool = true) {
+        let settings = NSMenu()
+        func item(_ title: String, _ sel: Selector?, on: Bool = false, enabled: Bool = true, in target: NSMenu? = nil) {
             let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
             i.target = self
             i.state = on ? .on : .off
             i.isEnabled = enabled
-            menu.addItem(i)
+            (target ?? menu).addItem(i)
         }
         func choices(_ title: String, _ names: [String], selected: Int, action: Selector) {
             let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -115,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
                 sub.addItem(it)
             }
             parent.submenu = sub
-            menu.addItem(parent)
+            settings.addItem(parent)
         }
 
         if let p = receiver.activePeer {
@@ -129,14 +127,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
         }
         menu.addItem(.separator())
         item(paused ? "Resume" : "Pause", #selector(togglePause))
-        menu.addItem(.separator())
+        item("Open at Login", #selector(toggleOpenAtLogin), on: opensAtLogin)
+
         choices("Speed", speedNames, selected: speedIdx, action: #selector(setSpeed(_:)))
         choices("Smoothing", smoothingNames, selected: smoothingIdx, action: #selector(setSmoothing(_:)))
-        item("Reverse scrolling", #selector(toggleReverseScroll), on: reverseScroll)
-        item("Round pointer while moving", #selector(toggleRoundPointer), on: roundPointer)
-        menu.addItem(.separator())
-        item("Play the target game", #selector(openGame))
-        item("Forget paired devices (\(receiver.trustedCount))", #selector(forget), enabled: receiver.trustedCount > 0)
+        item("Reverse scrolling", #selector(toggleReverseScroll), on: reverseScroll, in: settings)
+        item("Round pointer while moving", #selector(toggleRoundPointer), on: roundPointer, in: settings)
+        settings.addItem(.separator())
+        item("Play the target game", #selector(openGame), in: settings)
+        item("Forget paired devices (\(receiver.trustedCount))", #selector(forget), enabled: receiver.trustedCount > 0, in: settings)
+        let settingsParent = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        settingsParent.submenu = settings
+        menu.addItem(settingsParent)
+
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Orbit Pointer", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
@@ -164,6 +167,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
         receiver.paused = paused
         engine.setEnabled(!paused)
         setIcon()
+    }
+
+    private var opensAtLogin: Bool { SMAppService.mainApp.status == .enabled }
+
+    @objc func toggleOpenAtLogin() {
+        do {
+            if opensAtLogin {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            NSLog("Orbit Pointer: could not change Open at Login: \(error)")
+            NSSound.beep()
+        }
     }
 
     @objc func setSpeed(_ s: NSMenuItem) { speedIdx = s.tag }
@@ -261,30 +279,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
 
     func receiverDidChange(_ r: Receiver) {
         setIcon()
-    }
-
-    // MARK: notch
-
-    func notchModel() -> NotchModel {
-        var m = NotchModel()
-        m.macPaused = paused
-        if !receiver.bluetoothOn {
-            m.status = .noBluetooth
-            return m
-        }
-        guard let p = receiver.activePeer ?? receiver.peers.values.first else {
-            m.status = .searching
-            return m
-        }
-        m.deviceName = p.name
-        m.connected = true
-        m.model = p.model
-        m.battery = p.battery
-        switch p.state {
-        case .waiting, .challenge: m.status = .waiting
-        case .denied: m.status = .searching
-        case .approved: m.status = paused ? .paused : .live
-        }
-        return m
     }
 }

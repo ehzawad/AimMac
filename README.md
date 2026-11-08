@@ -29,7 +29,7 @@ The keyboard only opens from its button. While it's up, a row of keys gives you 
 Use it upright or turn the phone sideways for a wide trackpad with the controls in a slim column, and tap the rotation lock to stay in either one. The keyboard works in both. Your real trackpad keeps working the whole time.
 
 - **Pairing with a code.** The first time a phone connects, both screens show a six-digit code and the Mac asks you to allow it. Only allow it if the codes match.
-- **Notch panel.** Hover the notch (or the middle of the menu bar) to see the connected phone, its battery and quick buttons. Pin it to keep it open.
+- **Menu bar icon.** Everything on the Mac lives in one icon at the top right of the screen: the connected phone, its battery, Pause, Open at Login, Settings and Quit.
 - **Orbit Pop**, a small target game to try it on.
 
 ## Requirements
@@ -40,15 +40,28 @@ Use it upright or turn the phone sideways for a wide trackpad with the controls 
 
 ## 1. Mac app
 
+1. Download the latest `.dmg` from [Releases](https://github.com/ehzawad/AimMac/releases) and open it.
+2. Drag **Orbit Pointer** onto the **Applications** folder.
+3. Open Orbit Pointer from Applications or Spotlight.
+4. Allow **Bluetooth**, and **Accessibility** in System Settings › Privacy & Security › Accessibility. Accessibility is what lets it move the pointer and type.
+
+Look for its icon at the top right of the screen.
+
+- **To turn it off:** click the icon and choose **Quit Orbit Pointer**.
+- **To turn it on:** open Orbit Pointer from Applications or Spotlight. To have it start by itself, click the icon and choose **Open at Login**.
+- **If you can't see the icon:** a full menu bar can hide icons behind the notch. Quit a few other menu bar apps, or hold ⌘ and drag the icon to the right.
+- **To uninstall:** quit it and drag it from Applications to the Trash.
+
+### Building it yourself
+
 ```bash
 cd Mac
-chmod +x build.sh
 ./build.sh install
 ```
 
-This builds Orbit Pointer and puts it in `/Applications`. The first launch asks for **Bluetooth** and **Accessibility** (System Settings › Privacy & Security › Accessibility). Accessibility is what lets it move the pointer and type. Allow both.
+With an Apple Development certificate, macOS remembers the Accessibility permission across rebuilds. Without one, turn Orbit Pointer off and on in that list after each rebuild.
 
-With an Apple Development certificate, macOS remembers the permission across rebuilds. Without one, turn Orbit Pointer off and on in that list after each rebuild.
+`Mac/release.sh` builds the signed, notarized `.dmg`.
 
 ## 2. iPhone app
 
@@ -67,11 +80,11 @@ open AimMac.xcodeproj
 
 ## Settings
 
-Speed, smoothing, scroll direction and the round pointer are in the Orbit Pointer menu on the Mac. The round pointer is a circle that appears around the arrow while the phone is moving it, so it's easy to spot from a distance.
+Speed, smoothing, scroll direction and the round pointer are under **Settings** in the menu bar icon on the Mac. The round pointer is a circle that appears around the arrow while the phone is moving it, so it's easy to spot from a distance.
 
 ## Orbit Pop
 
-Click **Game** in the notch panel or **Play the target game** in the menu. Press **F** for full screen. Rings shrink and fade; pop them before they collapse. Center hits score double, gold rings triple, and every hit in a row raises your combo.
+Click the menu bar icon and choose **Settings › Play the target game**. Press **F** for full screen. Rings shrink and fade; pop them before they collapse. Center hits score double, gold rings triple, and every hit in a row raises your combo.
 
 ## How it works
 
