@@ -2,12 +2,12 @@ import SwiftUI
 
 @main
 struct AimPhoneApp: App {
-    @StateObject private var session = PointerSession()
+    @State private var session = RemoteSession()
 
     var body: some Scene {
         WindowGroup {
             PhoneRoot()
-                .environmentObject(session)
+                .environment(session)
                 .preferredColorScheme(.dark)
         }
     }

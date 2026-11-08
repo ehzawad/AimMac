@@ -1,0 +1,6 @@
+.DS_Store
+Mac/build/
+Apple/AimMac.xcodeproj/
+Apple/Generated/
+Apple/Local.xcconfig
+Tests/build/

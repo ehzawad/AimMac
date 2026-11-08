@@ -1,48 +1,66 @@
 import AppKit
 import CoreBluetooth
+import CryptoKit
 
 enum InputEvent {
-    case aim(t: Double, az: Double, el: Double)
-    case press(t: Double)
-    case release(t: Double)
-    case right(t: Double)
+    case buttonDown(MouseButton, startsDrag: Bool)
+    case buttonUp(MouseButton)
     case scroll(dx: Double, dy: Double)
     case move(dx: Double, dy: Double)
-    case center
-    case pause(Bool)
+    case text(String)
+    case key(code: UInt8, modifiers: KeyModifiers)
+    case keepAlive
 }
 
 struct Peer {
     let central: CBCentral
-    var deviceID: UUID?
-    var kind: DeviceKind = .watch
+    let connection: Int
+    var publicKey: Data?
+    var handshake: Handshake?
+    var ephemeral: Curve25519.KeyAgreement.PrivateKey?
+    var sessionKey: SymmetricKey?
+    var lastCounter: UInt32?
+    var challenge = Data()
+    var code = ""
     var name = "Unknown device"
     var model = ""
     var battery: Int?
     var state: LinkState = .waiting
-    var paused = false
     var lastSeen = CFAbsoluteTimeGetCurrent()
 
     var key: String { central.identifier.uuidString }
 }
 
+@MainActor
 protocol ReceiverDelegate: AnyObject {
-    /// Ask the user whether a new device may control the cursor.
-    func receiver(_ r: Receiver, shouldTrust peer: Peer, decide: @escaping (Bool) -> Void)
+    /// Ask the user whether a new device may control this Mac.
+    func receiver(_ r: Receiver, shouldTrust peer: Peer, decide: @escaping @MainActor (Bool) -> Void)
+    /// The device being asked about went away.
+    func receiverDismissTrustPrompt(_ r: Receiver)
     func receiver(_ r: Receiver, peer: Peer, event: InputEvent)
+    /// This device can no longer send input, so anything it held must be let go.
+    func receiver(_ r: Receiver, peerDidLeave key: String)
     func receiverDidChange(_ r: Receiver)
 }
 
-/// The Mac side of the Bluetooth link: advertises a service that the
-/// iPhone and Apple Watch apps connect to. Nothing goes over Wi-Fi or a server.
-final class Receiver: NSObject, CBPeripheralManagerDelegate {
+/// The Mac side of the Bluetooth link: advertises a service that the iPhone
+/// app connects to. Nothing goes over Wi-Fi or a server.
+@MainActor
+final class Receiver: NSObject, @MainActor CBPeripheralManagerDelegate {
     weak var delegate: ReceiverDelegate?
 
     private var pm: CBPeripheralManager!
-    private var inputChar: CBMutableCharacteristic?
     private var statusChar: CBMutableCharacteristic?
-    private var serviceAdded = false
-    private var asking = Set<String>()
+    private var publishRetry: Task<Void, Never>?
+
+    private let identity = MacIdentity.loadOrCreate()
+    private var macKey: Data { identity.publicKey.rawRepresentation }
+
+    private var nextConnection = 0
+    private var promptQueue: [String] = []
+    private var promptingKey: String?
+    private var recentDenials: [Data: CFAbsoluteTime] = [:]
+    private var strangerHellos: [CFAbsoluteTime] = []
 
     private(set) var peers: [String: Peer] = [:]
     private(set) var bluetoothOn = false
@@ -50,8 +68,8 @@ final class Receiver: NSObject, CBPeripheralManagerDelegate {
 
     private let defaults = UserDefaults.standard
     private var trusted: Set<String> {
-        get { Set(defaults.stringArray(forKey: "trustedDevices") ?? []) }
-        set { defaults.set(Array(newValue), forKey: "trustedDevices") }
+        get { Set(defaults.stringArray(forKey: "trustedDeviceKeys") ?? []) }
+        set { defaults.set(Array(newValue), forKey: "trustedDeviceKeys") }
     }
 
     let macName: String = {
@@ -66,7 +84,7 @@ final class Receiver: NSObject, CBPeripheralManagerDelegate {
     /// The approved device that sent something most recently.
     var activePeer: Peer? {
         peers.values
-            .filter { $0.state == .approved && CFAbsoluteTimeGetCurrent() - $0.lastSeen < 6 }
+            .filter { $0.state == .approved }
             .max { $0.lastSeen < $1.lastSeen }
     }
 
@@ -74,34 +92,69 @@ final class Receiver: NSObject, CBPeripheralManagerDelegate {
 
     func forgetAll() {
         trusted = []
-        for k in peers.keys { peers[k]?.state = .denied }
+        recentDenials.removeAll()
+        clearPrompts()
+        for k in peers.keys {
+            peers[k]?.state = .denied
+            delegate?.receiver(self, peerDidLeave: k)
+        }
         broadcastStatus()
         delegate?.receiverDidChange(self)
+    }
+
+    // MARK: publishing
+
+    /// Every return to powered-on starts clean: Core Bluetooth may have cleared
+    /// the service database while Bluetooth was off.
+    private func publishService() {
+        publishRetry?.cancel()
+        pm.stopAdvertising()
+        pm.removeAllServices()
+        let input = CBMutableCharacteristic(type: TM.input, properties: [.writeWithoutResponse],
+                                            value: nil, permissions: [.writeable])
+        let status = CBMutableCharacteristic(type: TM.status, properties: [.read, .notify],
+                                             value: nil, permissions: [.readable])
+        let auth = CBMutableCharacteristic(type: TM.auth, properties: [.read],
+                                           value: nil, permissions: [.readable])
+        let service = CBMutableService(type: TM.service, primary: true)
+        service.characteristics = [input, status, auth]
+        statusChar = status
+        pm.add(service)
+    }
+
+    private func retryPublish() {
+        publishRetry?.cancel()
+        publishRetry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, let self, self.bluetoothOn else { return }
+            self.publishService()
+        }
+    }
+
+    private func dropAllPeers() {
+        clearPrompts()
+        let keys = Array(peers.keys)
+        peers.removeAll()
+        for k in keys { delegate?.receiver(self, peerDidLeave: k) }
     }
 
     // MARK: CBPeripheralManagerDelegate
 
     func peripheralManagerDidUpdateState(_ p: CBPeripheralManager) {
         bluetoothOn = (p.state == .poweredOn)
-        if bluetoothOn && !serviceAdded {
-            let input = CBMutableCharacteristic(type: TM.input, properties: [.writeWithoutResponse],
-                                                value: nil, permissions: [.writeable])
-            let status = CBMutableCharacteristic(type: TM.status, properties: [.read, .notify],
-                                                 value: nil, permissions: [.readable])
-            let service = CBMutableService(type: TM.service, primary: true)
-            service.characteristics = [input, status]
-            inputChar = input
-            statusChar = status
-            serviceAdded = true
-            pm.add(service)
+        if bluetoothOn {
+            publishService()
+        } else {
+            publishRetry?.cancel()
+            dropAllPeers()
         }
-        if !bluetoothOn { peers.removeAll() }
         delegate?.receiverDidChange(self)
     }
 
     func peripheralManager(_ p: CBPeripheralManager, didAdd service: CBService, error: Error?) {
-        if let error = error {
-            NSLog("AimMac: could not add service: \(error)")
+        if let error {
+            NSLog("Orbit Pointer: could not add service: \(error)")
+            retryPublish()
             return
         }
         pm.startAdvertising([
@@ -110,15 +163,32 @@ final class Receiver: NSObject, CBPeripheralManagerDelegate {
         ])
     }
 
+    func peripheralManagerDidStartAdvertising(_ p: CBPeripheralManager, error: Error?) {
+        if let error {
+            NSLog("Orbit Pointer: could not advertise: \(error)")
+            retryPublish()
+        }
+    }
+
+    private func makePeer(_ central: CBCentral) -> Peer {
+        nextConnection += 1
+        return Peer(central: central, connection: nextConnection)
+    }
+
     func peripheralManager(_ p: CBPeripheralManager, central: CBCentral, didSubscribeTo c: CBCharacteristic) {
         let key = central.identifier.uuidString
-        if peers[key] == nil { peers[key] = Peer(central: central) }
+        if peers[key] == nil { peers[key] = makePeer(central) }
+        // Ask for the shortest Bluetooth interval; it's the biggest factor in how smooth motion feels.
+        pm.setDesiredConnectionLatency(.low, for: central)
         sendStatus(to: key)
         delegate?.receiverDidChange(self)
     }
 
     func peripheralManager(_ p: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom c: CBCharacteristic) {
-        peers.removeValue(forKey: central.identifier.uuidString)
+        let key = central.identifier.uuidString
+        peers.removeValue(forKey: key)
+        forgetPrompt(for: key)
+        delegate?.receiver(self, peerDidLeave: key)
         delegate?.receiverDidChange(self)
     }
 
@@ -127,11 +197,15 @@ final class Receiver: NSObject, CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ p: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
-        guard request.characteristic.uuid == TM.status else {
+        let key = request.central.identifier.uuidString
+        let data: Data
+        switch request.characteristic.uuid {
+        case TM.status: data = statusData(for: key)
+        case TM.auth: data = peers[key]?.challenge ?? Data()
+        default:
             pm.respond(to: request, withResult: .attributeNotFound)
             return
         }
-        let data = statusData(for: request.central.identifier.uuidString)
         guard request.offset <= data.count else {
             pm.respond(to: request, withResult: .invalidOffset)
             return
@@ -141,17 +215,23 @@ final class Receiver: NSObject, CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ p: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
-        for r in requests where r.characteristic.uuid == TM.input {
-            guard let v = r.value else { continue }
-            handle(central: r.central, data: v)
+        guard let first = requests.first else { return }
+        // A batch is all-or-nothing, and every packet is one whole write.
+        guard requests.allSatisfy({ $0.characteristic.uuid == TM.input && $0.offset == 0 && $0.value != nil }) else {
+            pm.respond(to: first, withResult: .invalidOffset)
+            return
         }
+        for r in requests {
+            if let v = r.value { handle(central: r.central, data: v) }
+        }
+        pm.respond(to: first, withResult: .success)
     }
 
     // MARK: packets
 
     private func handle(central: CBCentral, data: Data) {
         let key = central.identifier.uuidString
-        if peers[key] == nil { peers[key] = Peer(central: central) }
+        if peers[key] == nil { peers[key] = makePeer(central) }
         peers[key]?.lastSeen = CFAbsoluteTimeGetCurrent()
 
         var r = PacketReader(data)
@@ -160,93 +240,208 @@ final class Receiver: NSObject, CBPeripheralManagerDelegate {
 
         switch kind {
         case .hello:
-            guard let id = r.uuid() else { return }
-            let k = DeviceKind(rawValue: r.u8() ?? 0) ?? .watch
-            let name = r.rest()
-            peers[key]?.deviceID = id
-            peers[key]?.kind = k
-            if !name.isEmpty { peers[key]?.name = name }
-            if trusted.contains(id.uuidString) {
-                peers[key]?.state = .approved
-                sendStatus(to: key)
-            } else {
-                askTrust(key)
-            }
-            delegate?.receiverDidChange(self)
-            return
+            handleHello(key: key, reader: &r)
+        case .proof:
+            handleProof(key: key, reader: &r)
         case .info:
             let b = r.u8() ?? 255
-            peers[key]?.battery = b == 255 ? nil : Int(b)
+            peers[key]?.battery = b == 255 ? nil : Int(min(b, 100))
             let model = r.rest()
-            if !model.isEmpty { peers[key]?.model = model }
+            if !model.isEmpty { peers[key]?.model = String(model.prefix(40)) }
             delegate?.receiverDidChange(self)
-            return
+        case .sealed:
+            handleSealed(key: key, packet: data)
         default:
-            break
+            break  // input only counts inside a sealed packet
         }
+    }
 
-        // Everything below needs an approved device.
-        guard let peer = peers[key], peer.state == .approved else { return }
+    private func handleSealed(key: String, packet: Data) {
+        guard let peer = peers[key], peer.state == .approved, let sessionKey = peer.sessionKey,
+              let opened = PairingAuth.open(packet, after: peer.lastCounter, key: sessionKey) else { return }
+        peers[key]?.lastCounter = opened.counter
+
+        var r = PacketReader(opened.input)
+        guard let kind = r.kind else { return }
+        r.skipKind()
 
         let event: InputEvent?
         switch kind {
-        case .aim:
-            if let t = r.f64(), let az = r.f32(), let el = r.f32() {
-                event = .aim(t: t, az: Double(az), el: Double(el))
+        case .down:
+            if let button = r.u8().flatMap(MouseButton.init(rawValue:)) {
+                event = .buttonDown(button, startsDrag: r.u8() == 1)
             } else { event = nil }
-        case .press:
-            event = r.f64().map { InputEvent.press(t: $0) }
-        case .release:
-            event = r.f64().map { InputEvent.release(t: $0) }
-        case .right:
-            event = r.f64().map { InputEvent.right(t: $0) }
+        case .up: event = r.u8().flatMap(MouseButton.init(rawValue:)).map(InputEvent.buttonUp)
         case .scroll:
-            if let dx = r.f32(), let dy = r.f32() { event = .scroll(dx: Double(dx), dy: Double(dy)) } else { event = nil }
+            if let dx = r.f32(), let dy = r.f32(), abs(dx) <= 20_000, abs(dy) <= 20_000 {
+                event = .scroll(dx: Double(dx), dy: Double(dy))
+            } else { event = nil }
         case .move:
-            if let dx = r.f32(), let dy = r.f32() { event = .move(dx: Double(dx), dy: Double(dy)) } else { event = nil }
-        case .center:
-            event = .center
-        case .pause:
-            let on = (r.u8() ?? 0) != 0
-            peers[key]?.paused = on
-            event = .pause(on)
-            delegate?.receiverDidChange(self)
-        case .hello, .info:
+            if let dx = r.f32(), let dy = r.f32(), abs(dx) <= 20_000, abs(dy) <= 20_000 {
+                event = .move(dx: Double(dx), dy: Double(dy))
+            } else { event = nil }
+        case .text:
+            // Control characters arrive as `key`; none belong in typed text.
+            let text = String(String.UnicodeScalarView(r.rest().unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7F }))
+            event = text.isEmpty ? nil : .text(text)
+        case .key:
+            if let code = r.u8(), code <= 127, let mods = r.u8() {
+                event = .key(code: code, modifiers: KeyModifiers(rawValue: mods))
+            } else { event = nil }
+        case .alive:
+            event = .keepAlive
+        default:
             event = nil
         }
-        if let e = event, let p = peers[key] { delegate?.receiver(self, peer: p, event: e) }
+        if let event { delegate?.receiver(self, peer: peer, event: event) }
     }
 
-    private func askTrust(_ key: String) {
-        guard let peer = peers[key], !asking.contains(key) else { return }
-        asking.insert(key)
+    /// A device says who it is. Each connection gets exactly one chance, so an
+    /// identity can't be swapped while a prompt is on screen.
+    private func handleHello(key: String, reader r: inout PacketReader) {
+        guard peers[key]?.publicKey == nil,
+              r.u8() == PairingAuth.version,
+              let deviceKey = r.data(PairingAuth.keyLength),
+              let deviceEphemeral = r.data(PairingAuth.keyLength),
+              let commitment = r.data(PairingAuth.commitmentLength) else { return }
+
+        // Each try at guessing a pairing code costs a whole connection, and these make them scarce.
+        if !trusted.contains(deviceKey.base64EncodedString()) {
+            let now = CFAbsoluteTimeGetCurrent()
+            strangerHellos.removeAll { now - $0 > 60 }
+            guard strangerHellos.count < 10 else { return }
+            strangerHellos.append(now)
+        }
+
+        let ephemeral = Curve25519.KeyAgreement.PrivateKey()
+        let macNonce = PairingAuth.makeNonce()
+        let handshake = Handshake(macKey: macKey, deviceKey: deviceKey,
+                                  macEphemeral: ephemeral.publicKey.rawRepresentation,
+                                  deviceEphemeral: deviceEphemeral,
+                                  commitment: commitment, clientNonce: Data(), macNonce: macNonce)
+        guard let signature = try? identity.signature(for: PairingAuth.macStatement(handshake)) else { return }
+
+        var challenge = macKey
+        challenge.append(handshake.macEphemeral)
+        challenge.append(macNonce)
+        challenge.append(signature)
+
+        let name = r.rest()
+        peers[key]?.publicKey = deviceKey
+        peers[key]?.handshake = handshake
+        peers[key]?.ephemeral = ephemeral
+        peers[key]?.challenge = challenge
+        if !name.isEmpty { peers[key]?.name = String(name.prefix(40)) }
+        peers[key]?.state = .challenge
+        sendStatus(to: key)
+        delegate?.receiverDidChange(self)
+    }
+
+    private func handleProof(key: String, reader r: inout PacketReader) {
+        guard let peer = peers[key], peer.state == .challenge,
+              let deviceKey = peer.publicKey, var handshake = peer.handshake, let ephemeral = peer.ephemeral,
+              let clientNonce = r.data(PairingAuth.nonceLength),
+              let signature = r.data(PairingAuth.signatureLength) else { return }
+
+        handshake.clientNonce = clientNonce
+        let opensCommitment = PairingAuth.commitment(clientNonce: clientNonce, deviceKey: deviceKey,
+                                                     deviceEphemeral: handshake.deviceEphemeral) == handshake.commitment
+        guard opensCommitment,
+              PairingAuth.isValid(signature: signature, statement: PairingAuth.deviceStatement(handshake), key: deviceKey),
+              let sessionKey = PairingAuth.sessionKey(mine: ephemeral, theirs: handshake.deviceEphemeral, handshake) else {
+            peers[key]?.state = .denied
+            sendStatus(to: key)
+            delegate?.receiverDidChange(self)
+            return
+        }
+        peers[key]?.handshake = handshake
+        peers[key]?.ephemeral = nil
+        peers[key]?.sessionKey = sessionKey
+        peers[key]?.code = PairingAuth.code(handshake)
+
+        if trusted.contains(deviceKey.base64EncodedString()) {
+            peers[key]?.state = .approved
+            sendStatus(to: key)
+        } else {
+            requestApproval(key, deviceKey: deviceKey)
+        }
+        delegate?.receiverDidChange(self)
+    }
+
+    // MARK: approval
+
+    /// Prompts come one at a time, and a device just declined doesn't get to ask again right away.
+    private func requestApproval(_ key: String, deviceKey: Data) {
+        let now = CFAbsoluteTimeGetCurrent()
+        recentDenials = recentDenials.filter { now - $0.value < 60 }
+        guard recentDenials[deviceKey] == nil, promptQueue.count < 3 else {
+            peers[key]?.state = .denied
+            sendStatus(to: key)
+            return
+        }
         peers[key]?.state = .waiting
         sendStatus(to: key)
+        promptQueue.append(key)
+        showNextPrompt()
+    }
+
+    private func showNextPrompt() {
+        guard promptingKey == nil, !promptQueue.isEmpty else { return }
+        let key = promptQueue.removeFirst()
+        guard let peer = peers[key], let deviceKey = peer.publicKey else {
+            showNextPrompt()
+            return
+        }
+        promptingKey = key
+        let connection = peer.connection
         delegate?.receiver(self, shouldTrust: peer) { [weak self] ok in
-            guard let self = self else { return }
-            self.asking.remove(key)
-            if ok, let id = self.peers[key]?.deviceID {
-                var t = self.trusted
-                t.insert(id.uuidString)
-                self.trusted = t
+            guard let self, self.promptingKey == key else { return }
+            self.promptingKey = nil
+            // The decision only counts for the device and connection it was asked about.
+            if self.peers[key]?.connection == connection, self.peers[key]?.publicKey == deviceKey {
+                if ok {
+                    var t = self.trusted
+                    t.insert(deviceKey.base64EncodedString())
+                    self.trusted = t
+                } else {
+                    self.recentDenials[deviceKey] = CFAbsoluteTimeGetCurrent()
+                }
+                self.peers[key]?.state = ok ? .approved : .denied
+                self.sendStatus(to: key)
             }
-            self.peers[key]?.state = ok ? .approved : .denied
-            self.sendStatus(to: key)
             self.delegate?.receiverDidChange(self)
+            self.showNextPrompt()
+        }
+    }
+
+    private func forgetPrompt(for key: String) {
+        promptQueue.removeAll { $0 == key }
+        guard promptingKey == key else { return }
+        promptingKey = nil
+        delegate?.receiverDismissTrustPrompt(self)
+        showNextPrompt()
+    }
+
+    private func clearPrompts() {
+        promptQueue.removeAll()
+        if promptingKey != nil {
+            promptingKey = nil
+            delegate?.receiverDismissTrustPrompt(self)
         }
     }
 
     // MARK: status
 
-    private func statusData(for key: String) -> Data {
+    private func statusData(for key: String, limit: Int = 512) -> Data {
         var d = Data([peers[key]?.state.rawValue ?? LinkState.waiting.rawValue, paused ? 1 : 0])
-        d.append(contentsOf: Array(macName.utf8))
+        d.append(contentsOf: utf8Prefix(macName, maxBytes: max(0, limit - 2)).utf8)
         return d
     }
 
     private func sendStatus(to key: String) {
         guard let c = statusChar, let peer = peers[key] else { return }
-        _ = pm.updateValue(statusData(for: key), for: c, onSubscribedCentrals: [peer.central])
+        let data = statusData(for: key, limit: peer.central.maximumUpdateValueLength)
+        _ = pm.updateValue(data, for: c, onSubscribedCentrals: [peer.central])
     }
 
     private func broadcastStatus() {

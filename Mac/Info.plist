@@ -2,18 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key><string>local.aimmac.mac</string>
-    <key>CFBundleName</key><string>AimMac</string>
-    <key>CFBundleDisplayName</key><string>AimMac</string>
-    <key>CFBundleExecutable</key><string>AimMac</string>
+    <key>CFBundleIdentifier</key><string>com.ehzawad.aimmac.mac</string>
+    <key>CFBundleName</key><string>Orbit Pointer</string>
+    <key>CFBundleDisplayName</key><string>Orbit Pointer</string>
+    <key>CFBundleExecutable</key><string>OrbitPointer</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleVersion</key><string>1</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleShortVersionString</key><string>0.9.0</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>AimMac talks to your iPhone or Apple Watch over Bluetooth to move the pointer.</string>
+    <string>Orbit Pointer talks to your iPhone over Bluetooth so it can act as this Mac's trackpad and keyboard.</string>
 </dict>
 </plist>
