@@ -180,8 +180,8 @@ struct RemoteView: View {
         .defersSystemGestures(on: .all)
         .persistentSystemOverlays(isLandscape ? .hidden : .automatic)
         .background {
-            KeyboardCapture(session: session, isActive: session.keyboardShown)
-                .frame(width: 0, height: 0)
+            KeyboardCapture(session: session, isActive: session.keyboardShown, epoch: session.typingEpoch)
+                .frame(width: 1, height: 1)
                 .accessibilityHidden(true)
         }
         .sheet(isPresented: $showSettings) { SettingsView() }
@@ -196,7 +196,10 @@ struct RemoteView: View {
                 headerControl
             }
             trackpad
-            if session.keyboardShown { KeyRow() }
+            if session.keyboardShown {
+                TypedPreview(text: session.typedPreview + session.composing)
+                KeyRow()
+            }
             keyboardButton
         }
     }
@@ -207,9 +210,15 @@ struct RemoteView: View {
             HStack(spacing: 8) {
                 trackpad
                     .overlay(alignment: .topLeading) {
-                        status
-                            .padding(14)
-                            .allowsHitTesting(false)
+                        // Sideways with the keyboard up, there's only room for it on the trackpad.
+                        if session.keyboardShown {
+                            TypedPreview(text: session.typedPreview + session.composing)
+                                .padding(8)
+                        } else {
+                            status
+                                .padding(14)
+                                .allowsHitTesting(false)
+                        }
                     }
                 VStack(spacing: 8) {
                     // With the keyboard up there's only room for the button that closes it.
@@ -320,6 +329,27 @@ struct RemoteView: View {
                 .background(session.keyboardShown ? mint.opacity(0.18) : panel, in: RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// What you've typed, so you can catch a typo without reading the Mac from across the room.
+struct TypedPreview: View {
+    let text: String
+
+    var body: some View {
+        Text(text.isEmpty ? "What you type appears here" : text)
+            .font(.body.weight(.medium))
+            .foregroundStyle(text.isEmpty ? Color.secondary : Color.primary)
+            .lineLimit(1)
+            .truncationMode(.head)  // the newest letters are the ones to check
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 36)
+            .background(Color(white: 0.16), in: RoundedRectangle(cornerRadius: 10))
+            .allowsHitTesting(false)
+            .accessibilityElement()
+            .accessibilityLabel("Typed so far")
+            .accessibilityValue(text.isEmpty ? "Nothing yet" : text)
     }
 }
 

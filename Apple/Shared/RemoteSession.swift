@@ -10,7 +10,13 @@ final class RemoteSession {
     /// Show the trackpad without a Mac, so it can be tried first.
     var demo = false
     var keyboardShown = false {
-        didSet { if !keyboardShown { modifiers = [] } }
+        didSet {
+            if !keyboardShown {
+                modifiers = []
+                composing = ""
+                caretMoved()
+            }
+        }
     }
     /// False while the app is in the background or interrupted.
     var sceneActive = true {
@@ -23,6 +29,17 @@ final class RemoteSession {
 
     /// ⌘ ⌥ ⌃ ⇧ waiting for the next key.
     private(set) var modifiers: KeyModifiers = []
+    /// The text typed since the Mac's caret was last somewhere we knew, to read from a distance.
+    private(set) var typedPreview = ""
+    /// Dictation or composed text that isn't final yet.
+    var composing = ""
+    /// Goes up whenever the Mac's caret may have moved.
+    private(set) var typingEpoch = 0
+
+    private func caretMoved() {
+        typedPreview = ""
+        typingEpoch &+= 1
+    }
     private(set) var dragging = false
     private(set) var rotationLocked = false
     @ObservationIgnored private var leaseTask: Task<Void, Never>?
@@ -45,6 +62,7 @@ final class RemoteSession {
     func click(_ button: MouseButton) {
         DeviceInfo.haptic()
         modifiers = []
+        caretMoved()  // a click can put the caret anywhere
         link.button(button, down: true)
         link.button(button, down: false)
     }
@@ -54,6 +72,7 @@ final class RemoteSession {
         dragging = true
         DeviceInfo.haptic()
         modifiers = []
+        caretMoved()
         link.button(.left, down: true, startsDrag: true)
         // The Mac lets go by itself if these stop, however the phone went away.
         leaseTask = Task { [weak self] in
@@ -113,15 +132,25 @@ final class RemoteSession {
     }
 
     func press(_ code: UInt8) {
+        let plainDelete = code == MacKey.delete && modifiers.isEmpty
         link.key(code, modifiers: modifiers)
         modifiers = []
+        if plainDelete {
+            if !typedPreview.isEmpty { typedPreview.removeLast() }
+        } else {
+            caretMoved()  // return, arrows and shortcuts leave the caret somewhere new
+        }
     }
 
     /// Text from the iPhone keyboard, one insertion at a time.
     func insert(_ text: String) {
         var plain = ""
         func flushPlain() {
-            if !plain.isEmpty { link.type(plain) }
+            if !plain.isEmpty {
+                link.type(plain)
+                typedPreview += plain
+                if typedPreview.count > 120 { typedPreview.removeFirst(typedPreview.count - 120) }
+            }
             plain = ""
         }
         for character in text {
@@ -133,6 +162,7 @@ final class RemoteSession {
                 flushPlain()
                 link.key(chord.code, modifiers: chord.shift ? modifiers.union(.shift) : modifiers)
                 modifiers = []
+                caretMoved()
             } else {
                 // A modifier only ever applies to the very next key, even one with no shortcut.
                 modifiers = []
