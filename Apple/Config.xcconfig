@@ -1,4 +1,4 @@
-// Shared settings for the iPhone and Apple Watch apps.
+// Shared settings for the iPhone app.
 //
 // To sign with your own Apple ID, create Apple/Local.xcconfig (it is ignored
 // by git) with two lines:

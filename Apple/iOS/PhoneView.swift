@@ -3,56 +3,91 @@ import UIKit
 
 private let mint = Color(red: 0.36, green: 0.95, blue: 0.72)
 private let panel = Color.white.opacity(0.07)
+private let macAppURL = URL(string: "https://github.com/ehzawad/AimMac/releases")!
 
 struct PhoneRoot: View {
-    @EnvironmentObject var session: PointerSession
+    @Environment(RemoteSession.self) private var session
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             content
         }
-        .onChange(of: session.link.state) { _, s in
-            // keep the screen on while it's in use as a remote
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            session.sceneActive = (phase == .active)
+        }
+        .onChange(of: session.link.state, initial: true) { _, s in
+            // keep the screen on while it's in use
             UIApplication.shared.isIdleTimerDisabled = (s == .ready)
         }
     }
 
     @ViewBuilder private var content: some View {
-        switch session.link.state {
-        case .bluetoothOff:
-            Notice(icon: "antenna.radiowaves.left.and.right.slash", title: "Bluetooth is off",
-                   text: "Turn on Bluetooth and allow AimMac to use it in Settings.")
-        case .searching where !session.link.hasPairedMac:
-            PhoneMacPicker()
-        case .searching, .connecting:
-            Notice(icon: "laptopcomputer", title: "Connecting…",
-                   text: "Make sure AimMac is running on your Mac.", unpair: true)
-        case .waitingApproval:
-            Notice(icon: "checkmark.shield", title: "Allow on your Mac",
-                   text: "Click Allow in the window that appeared on \(session.link.macName.isEmpty ? "your Mac" : session.link.macName).")
-        case .denied:
-            Notice(icon: "xmark.shield", title: "Not allowed",
-                   text: "The Mac declined this iPhone.", unpair: true)
-        case .ready:
-            Remote()
+        if session.demo {
+            RemoteView()
+        } else {
+            switch session.link.state {
+            case .bluetoothOff:
+                Notice(icon: "antenna.radiowaves.left.and.right.slash", title: "Bluetooth is off",
+                       text: "Turn on Bluetooth and allow Orbit Pointer to use it in Settings.")
+            case .searching where !session.link.hasPairedMac:
+                MacPicker()
+            case .searching, .connecting:
+                Notice(icon: "laptopcomputer", title: "Connecting…",
+                       text: "Make sure Orbit Pointer is running on your Mac.", unpair: true)
+            case .waitingApproval:
+                ApprovalNotice()
+            case .denied:
+                Notice(icon: "xmark.shield", title: "Not allowed",
+                       text: "The Mac declined this iPhone.", unpair: true)
+            case .identityMismatch:
+                Notice(icon: "exclamationmark.shield", title: "This isn't your Mac",
+                       text: "A nearby device answered as your Mac but couldn't prove it. If you reinstalled Orbit Pointer on your Mac, pair it again.",
+                       unpair: true)
+            case .ready:
+                RemoteView()
+            }
         }
     }
 }
 
-struct PhoneMacPicker: View {
-    @EnvironmentObject var session: PointerSession
+struct ApprovalNotice: View {
+    @Environment(RemoteSession.self) private var session
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "checkmark.shield").font(.system(size: 44)).foregroundStyle(mint)
+                .accessibilityHidden(true)
+            Text("Allow on your Mac").font(.title2.bold())
+            if let code = session.link.pairingCode {
+                Text(code)
+                    .font(.system(size: 48, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .accessibilityLabel("Pairing code \(code.map(String.init).joined(separator: " "))")
+                Text("Click Allow on \(session.link.macName.isEmpty ? "your Mac" : session.link.macName) only if it shows this code.")
+                    .foregroundStyle(.secondary).multilineTextAlignment(.center)
+            } else {
+                Text("Confirming your Mac…").foregroundStyle(.secondary)
+            }
+        }
+        .padding(32)
+    }
+}
+
+struct MacPicker: View {
+    @Environment(RemoteSession.self) private var session
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("AimMac").font(.system(size: 34, weight: .bold, design: .rounded))
-            Text("Your iPhone becomes a pointer for your Mac. Pick the Mac to pair with.")
+            Text("Orbit Pointer").font(.system(size: 34, weight: .bold, design: .rounded))
+            Text("Your iPhone becomes a trackpad and keyboard for your Mac. Pick the Mac to pair with.")
                 .foregroundStyle(.secondary)
             VStack(spacing: 10) {
                 if session.link.found.isEmpty {
                     HStack(spacing: 10) {
                         ProgressView()
-                        Text("Looking for Macs running AimMac…").foregroundStyle(.secondary)
+                        Text("Looking for Macs running Orbit Pointer…").foregroundStyle(.secondary)
                         Spacer()
                     }
                     .padding()
@@ -61,7 +96,7 @@ struct PhoneMacPicker: View {
                 ForEach(session.link.found) { mac in
                     Button { session.link.pair(mac) } label: {
                         HStack {
-                            Image(systemName: "laptopcomputer").font(.title3)
+                            Image(systemName: "laptopcomputer").font(.title3).accessibilityHidden(true)
                             Text(mac.name).font(.headline)
                             Spacer()
                             Text("Pair").bold().foregroundStyle(.black)
@@ -72,16 +107,34 @@ struct PhoneMacPicker: View {
                         .background(panel, in: RoundedRectangle(cornerRadius: 16))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Pair with \(mac.name)")
                 }
             }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("You also need the free Orbit Pointer app on your Mac.")
+                    .foregroundStyle(.secondary)
+                Link("Get the Mac app", destination: macAppURL)
+                    .font(.headline)
+                    .tint(mint)
+            }
+
             Spacer()
+
+            Button { session.demo = true } label: {
+                Text("Try the trackpad without a Mac")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(panel, in: RoundedRectangle(cornerRadius: 16))
+            }
+            .buttonStyle(.plain)
         }
         .padding(24)
     }
 }
 
 struct Notice: View {
-    @EnvironmentObject var session: PointerSession
+    @Environment(RemoteSession.self) private var session
     let icon: String
     let title: String
     let text: String
@@ -90,6 +143,7 @@ struct Notice: View {
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: icon).font(.system(size: 44)).foregroundStyle(mint)
+                .accessibilityHidden(true)
             Text(title).font(.title2.bold())
             Text(text).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if unpair {
@@ -100,192 +154,151 @@ struct Notice: View {
     }
 }
 
-/// Two modes:
-///  Pointer  – aim the top edge at the screen, the big pad clicks / drags.
-///  Trackpad – phone lies on the table, slide a finger to move.
-struct Remote: View {
-    @EnvironmentObject var session: PointerSession
-    @State private var trackpad = false
+/// The whole app: a trackpad, and a button for the keyboard.
+struct RemoteView: View {
+    @Environment(RemoteSession.self) private var session
     @State private var showSettings = false
 
     var body: some View {
         VStack(spacing: 12) {
             header
-            Picker("", selection: $trackpad) {
-                Text("Pointer").tag(false)
-                Text("Trackpad").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: trackpad) { _, on in session.aimEnabled = !on }
-
-            HStack(spacing: 12) {
-                if trackpad { TrackSurface() } else { ClickPad() }
-                ScrollStrip().frame(width: 64)
-            }
-
-            HStack(spacing: 12) {
-                bigButton("cursorarrow.click.2", "Right click") { session.rightClick() }
-                if !trackpad {
-                    bigButton("scope", "Center") { session.center() }
-                }
-                bigButton(session.link.paused ? "play.fill" : "pause.fill", session.link.paused ? "Resume" : "Pause") {
-                    session.setPaused(!session.link.paused)
-                }
-            }
-            .frame(height: 64)
+            trackpad
+            if session.keyboardShown { KeyRow() }
+            keyboardButton
         }
-        .padding(16)
-        .sheet(isPresented: $showSettings) { PhoneSettings() }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background {
+            KeyboardCapture(session: session, isActive: session.keyboardShown)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
+        .sheet(isPresented: $showSettings) { SettingsView() }
     }
 
     private var header: some View {
-        HStack {
-            Circle().fill(session.link.macPaused || session.link.paused ? Color.orange : mint).frame(width: 8, height: 8)
-            Text(session.link.macName.isEmpty ? "Connected" : session.link.macName).font(.subheadline.weight(.semibold))
+        HStack(spacing: 8) {
+            Circle().fill(session.link.macPaused ? Color.orange : mint).frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            Text(statusText).font(.subheadline.weight(.semibold))
             Spacer()
-            Button { showSettings = true } label: {
-                Image(systemName: "gearshape").font(.title3)
+            if session.demo {
+                Button("Done") {
+                    session.keyboardShown = false
+                    session.endDrag()
+                    session.demo = false
+                }
+                .tint(.white)
+            } else {
+                Button {
+                    session.keyboardShown = false
+                    session.endDrag()
+                    showSettings = true
+                } label: {
+                    Image(systemName: "gearshape").font(.title3).frame(minWidth: 44, minHeight: 44)
+                }
+                .tint(.white)
+                .accessibilityLabel("Settings")
             }
-            .tint(.white)
         }
     }
 
-    private func bigButton(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon).font(.system(size: 18, weight: .semibold))
-                Text(title).font(.caption)
+    private var statusText: String {
+        if session.demo { return "Demo: no Mac connected" }
+        let name = session.link.macName.isEmpty ? "Connected" : session.link.macName
+        return session.link.macPaused ? "\(name) · paused" : name
+    }
+
+    private var trackpad: some View {
+        let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+        return shape
+            .fill(session.dragging ? mint.opacity(0.18) : panel)
+            .overlay(shape.stroke(session.dragging ? mint : Color.white.opacity(0.12), lineWidth: 1.5))
+            .overlay {
+                if !session.keyboardShown {
+                    VStack(spacing: 6) {
+                        Text("One finger moves · tap clicks")
+                        Text("Two fingers scroll · two-finger tap right-clicks")
+                        Text("Tap, then slide to drag")
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .padding()
+                    .allowsHitTesting(false)
+                }
             }
+            .overlay { TrackpadSurface(session: session) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(panel, in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityElement()
+            .accessibilityLabel("Trackpad")
+            .accessibilityHint("Touch directly to move and tap to click, or use the actions rotor for click and scroll.")
+            .accessibilityAddTraits([.isButton, .allowsDirectInteraction])
+            .accessibilityAction { session.click(.left) }
+            .accessibilityAction(named: "Right click") { session.click(.right) }
+            .accessibilityAction(named: "Scroll up") { session.link.scroll(dx: 0, dy: 120) }
+            .accessibilityAction(named: "Scroll down") { session.link.scroll(dx: 0, dy: -120) }
+    }
+
+    private var keyboardButton: some View {
+        Button { session.keyboardShown.toggle() } label: {
+            Label(session.keyboardShown ? "Hide Keyboard" : "Keyboard",
+                  systemImage: session.keyboardShown ? "keyboard.chevron.compact.down" : "keyboard")
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background(session.keyboardShown ? mint.opacity(0.18) : panel, in: RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
     }
 }
 
-/// Tap to click, hold to drag. The Mac clicks where you were aiming when the
-/// finger touched down.
-struct ClickPad: View {
-    @EnvironmentObject var session: PointerSession
+/// The Mac keys an iPhone keyboard doesn't have. Modifiers apply to the next key.
+struct KeyRow: View {
+    @Environment(RemoteSession.self) private var session
 
     var body: some View {
-        let on = session.pressing
-        RoundedRectangle(cornerRadius: 28, style: .continuous)
-            .fill(on ? mint.opacity(0.35) : panel)
-            .overlay(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(on ? mint : Color.white.opacity(0.12), lineWidth: 1.5)
-            )
-            .overlay(
-                VStack(spacing: 8) {
-                    Image(systemName: on ? "hand.point.up.left.fill" : "hand.tap").font(.system(size: 36))
-                    Text(on ? "Holding" : "Tap to click · hold to drag").foregroundStyle(.secondary)
-                    Text("Point the top edge at the screen").font(.caption).foregroundStyle(.tertiary)
-                }
-            )
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in session.press() }
-                    .onEnded { _ in session.release() }
-            )
-    }
-}
-
-/// Phone flat on the table: slide to move, tap to click, the lock button holds
-/// the left button down for dragging.
-struct TrackSurface: View {
-    @EnvironmentObject var session: PointerSession
-    @State private var last: CGPoint?
-    @State private var startTime = Date()
-    @State private var travelled: CGFloat = 0
-    @State private var dragLock = false
-
-    var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(panel)
-                .overlay(
-                    VStack(spacing: 8) {
-                        Image(systemName: "rectangle.and.hand.point.up.left").font(.system(size: 36))
-                        Text("Slide to move · tap to click").foregroundStyle(.secondary)
-                    }
-                )
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { v in
-                            if let l = last {
-                                let dx = v.location.x - l.x, dy = v.location.y - l.y
-                                travelled += abs(dx) + abs(dy)
-                                // a little acceleration: slow = precise, fast = far
-                                let speed = hypot(dx, dy)
-                                let gain = 1.4 + min(speed / 12, 2.2)
-                                session.link.move(dx: Double(dx * gain), dy: Double(dy * gain))
-                            } else {
-                                startTime = Date()
-                                travelled = 0
-                            }
-                            last = v.location
-                        }
-                        .onEnded { _ in
-                            last = nil
-                            if travelled < 6 && Date().timeIntervalSince(startTime) < 0.25 {
-                                session.press()
-                                session.release()
-                            }
-                        }
-                )
-
-            Button {
-                dragLock.toggle()
-                if dragLock { session.press() } else { session.release() }
-            } label: {
-                Label(dragLock ? "Release" : "Hold", systemImage: dragLock ? "lock.fill" : "lock.open")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(dragLock ? mint : Color.white.opacity(0.12), in: Capsule())
-                    .foregroundStyle(dragLock ? Color.black : Color.white)
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                action("esc", "Escape", MacKey.escape)
+                action("tab", "Tab", MacKey.tab)
+                modifier("⌘", "Command", .command)
+                modifier("⌥", "Option", .option)
+                modifier("⌃", "Control", .control)
+                modifier("⇧", "Shift", .shift)
+                action("←", "Left arrow", MacKey.left)
+                action("↑", "Up arrow", MacKey.up)
+                action("↓", "Down arrow", MacKey.down)
+                action("→", "Right arrow", MacKey.right)
             }
-            .padding(12)
         }
+        .scrollIndicators(.hidden)
+    }
+
+    private func action(_ title: String, _ label: String, _ code: UInt8) -> some View {
+        Button { session.press(code) } label: { keyLabel(title, on: false) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(label)
+    }
+
+    private func modifier(_ title: String, _ label: String, _ modifier: KeyModifiers) -> some View {
+        let on = session.modifiers.contains(modifier)
+        return Button { session.toggle(modifier) } label: { keyLabel(title, on: on) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private func keyLabel(_ title: String, on: Bool) -> some View {
+        Text(title)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(on ? Color.black : Color.white)
+            .frame(minWidth: 44, minHeight: 44)
+            .background(on ? mint : panel, in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
-/// Slide up and down to scroll, like two fingers on a trackpad.
-struct ScrollStrip: View {
-    @EnvironmentObject var session: PointerSession
-    @State private var last: CGFloat?
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .fill(panel)
-            .overlay(
-                VStack {
-                    Image(systemName: "chevron.up")
-                    Spacer()
-                    Image(systemName: "arrow.up.and.down").font(.title3)
-                    Text("Scroll").font(.caption2)
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                }
-                .foregroundStyle(.secondary)
-                .padding(.vertical, 18)
-            )
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { v in
-                        if let l = last { session.link.scroll(dx: 0, dy: Double(v.location.y - l) * 2.2) }
-                        last = v.location.y
-                    }
-                    .onEnded { _ in last = nil }
-            )
-    }
-}
-
-struct PhoneSettings: View {
-    @EnvironmentObject var session: PointerSession
+struct SettingsView: View {
+    @Environment(RemoteSession.self) private var session
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -298,9 +311,8 @@ struct PhoneSettings: View {
                         dismiss()
                     }
                 }
-                Section("Tips") {
-                    Text("Pointer: hold the phone like a remote with the top edge toward the screen. Aim at the middle and tap Center.")
-                    Text("Speed, smoothing and inverting are set on the Mac, in the AimMac menu.")
+                Section {
+                    Text("Speed, smoothing and scroll direction are set on the Mac, in the Orbit Pointer menu.")
                 }
             }
             .navigationTitle("Settings")

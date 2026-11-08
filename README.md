@@ -1,42 +1,51 @@
-<p align="center"><img src="docs/icon.png" width="160" alt="AimMac icon"></p>
+<p align="center"><img src="docs/icon.png" width="160" alt="Orbit Pointer icon"></p>
 
-# AimMac
+# Orbit Pointer
 
-Turn your **iPhone** or **Apple Watch** into a pointer for your Mac. Aim it at the screen to move the cursor, tap to click, hold to drag.
+Use your **iPhone as a trackpad and keyboard** for your Mac, right alongside your real trackpad.
 
-No Wi-Fi and no servers: the phone or watch talks straight to the Mac over Bluetooth.
+No Wi-Fi and no servers: the phone talks straight to the Mac over Bluetooth, and everything you type is encrypted between the two.
 
-> Status: the Mac app and the iPhone app work (tested on iOS 27.2). The Apple Watch app is written but has not been tested on a real watch yet.
+> Status: early beta. Real-device testing is still under way, so expect rough edges.
 
 ## What it does
 
-- **Point like a laser.** The cursor goes where the top edge of your device points (12 o'clock on the watch). Up/down comes from gravity, so it never drifts. Works across all your displays.
-- **Tap** to click, **double-tap** to double-click, **hold** to drag, a **right-click** button, and scrolling (Digital Crown on the watch, a scroll strip on the phone).
-- **Trackpad mode on the iPhone.** Lay it on the table and slide a finger, with a drag lock for moving windows.
-- **Center** re-aims the middle of the screen. **Pause** frees the cursor for your real trackpad.
-- **Pairing with approval.** The first time a device connects, the Mac asks you to allow it. Devices you didn't allow can't move the cursor.
-- **Notch panel.** Hover the notch (or the middle of the menu bar) to see the connected device, its battery, a live aim map and quick buttons. Pin it to keep it open.
+| On the iPhone | On the Mac |
+| --- | --- |
+| Slide one finger | Move the pointer |
+| Tap | Click |
+| Tap, then slide | Drag |
+| Slide two fingers | Scroll, with momentum |
+| Tap with two fingers | Right-click |
+| **Keyboard** button | Type with the iPhone keyboard |
+
+The keyboard only opens from its button. While it's up, a row of keys gives you esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows; a modifier applies to the next key you press.
+
+Your real trackpad keeps working the whole time.
+
+- **Pairing with a code.** The first time a phone connects, both screens show a six-digit code and the Mac asks you to allow it. Only allow it if the codes match.
+- **Notch panel.** Hover the notch (or the middle of the menu bar) to see the connected phone, its battery and quick buttons. Pin it to keep it open.
 - **Orbit Pop**, a small target game to try it on.
 
 ## Requirements
 
 - Mac with macOS 14 or later, Apple silicon or Intel, with Bluetooth
-- iPhone with iOS 17 or later and/or Apple Watch with watchOS 10 or later
-- Xcode 15 or later (use a version whose SDK matches your iPhone's iOS)
+- iPhone with iOS 17 or later
+- Xcode 26 or later to build it (Swift 6)
 
-## 1. Mac receiver
+## 1. Mac app
 
 ```bash
 cd Mac
 chmod +x build.sh
-./build.sh run
+./build.sh install
 ```
 
-The first launch asks for **Bluetooth** and **Accessibility** (System Settings › Privacy & Security › Accessibility). Accessibility is what lets it move the cursor. Allow both.
+This builds Orbit Pointer and puts it in `/Applications`. The first launch asks for **Bluetooth** and **Accessibility** (System Settings › Privacy & Security › Accessibility). Accessibility is what lets it move the pointer and type. Allow both.
 
-After a rebuild macOS may forget the Accessibility permission. If the cursor stops moving, turn AimMac off and on again in that list.
+With an Apple Development certificate, macOS remembers the permission across rebuilds. Without one, turn Orbit Pointer off and on in that list after each rebuild.
 
-## 2. iPhone and Apple Watch apps
+## 2. iPhone app
 
 With [XcodeGen](https://github.com/yonaskolb/XcodeGen):
 
@@ -47,30 +56,13 @@ xcodegen
 open AimMac.xcodeproj
 ```
 
-1. Sign with your Apple ID: create `Apple/Local.xcconfig` with your bundle prefix and Team ID (see `Apple/Config.xcconfig`), or just pick your Team in **Signing & Capabilities**. A free Apple ID works.
-2. Choose your iPhone (or your watch) as the run destination and press **⌘R**. The first time, turn on **Developer Mode** on the iPhone (Settings › Privacy & Security) and trust your developer profile (Settings › General › VPN & Device Management).
-3. Open AimMac on the device, tap **Pair** next to your Mac, then click **Allow** on the Mac.
+1. Sign with your Apple ID: create `Apple/Local.xcconfig` with your bundle prefix and Team ID (see `Apple/Config.xcconfig`), or just pick your Team in **Signing & Capabilities**.
+2. Choose your iPhone as the run destination and press **⌘R**. The first time, turn on **Developer Mode** on the iPhone (Settings › Privacy & Security) and trust your developer profile (Settings › General › VPN & Device Management).
+3. Open Orbit Pointer on the iPhone, tap **Pair** next to your Mac, check that the codes match, then click **Allow** on the Mac.
 
-With a free Apple ID, apps you install from Xcode stop opening after 7 days; just run them again from Xcode.
+## Settings
 
-<details>
-<summary>Without XcodeGen</summary>
-
-1. Xcode › File › New › Project › iOS › App, name it `AimMac`, SwiftUI.
-2. File › New › Target › watchOS › App, name it `AimMacWatch`, as a watch-only app.
-3. Delete the generated `…App.swift` and `ContentView.swift` files from both targets.
-4. Drag in `Apple/iOS` (iPhone target only), `Apple/Watch` (watch target only), and `Apple/Shared` plus `Shared/Protocol.swift` (both targets).
-5. In each target's **Info** tab add `Privacy - Bluetooth Always Usage Description` and `Privacy - Motion Usage Description`.
-
-</details>
-
-## Using it
-
-Hold the device like a remote with its top edge toward the screen. Point at the middle of the screen and tap **Center**.
-
-Speed, smoothing and axis inversion live in the AimMac menu on the Mac.
-
-Watch tips: on the iPhone's Watch app turn off **Passcode › Wrist Detection** if you hold the watch in your hand, set **Display & Brightness › Wake Duration** to 70 seconds, and **General › Return to Clock › AimMac** to one hour. Long-press the watch screen for settings and unpairing.
+Speed, smoothing and scroll direction are in the Orbit Pointer menu on the Mac.
 
 ## Orbit Pop
 
@@ -78,13 +70,16 @@ Click **Game** in the notch panel or **Play the target game** in the menu. Press
 
 ## How it works
 
-- **Device** (`Apple/`): reads gravity and the gyroscope 100 times a second. Up/down is the angle of the top edge above the horizon; left/right adds up turns around the true vertical. Each sample carries the device's timestamp.
-- **Mac** (`Mac/`): projects the aim onto the screen like a laser hitting a wall, smooths it with a [1€ filter](https://gery.casiez.net/1euro/) using the device's timestamps, and eases the cursor toward it 240 times a second on its own thread. A click lands where you were aiming the moment your finger touched the screen, so the tap's jolt doesn't move it.
-- **Bluetooth**: the Mac advertises a service; the device connects and writes small packets. The protocol is documented at the top of `Shared/Protocol.swift`.
+- **iPhone** (`Apple/`): a multi-touch surface turns fingers into relative moves, clicks and scrolls, and a key-capture view forwards the iPhone keyboard.
+- **Mac** (`Mac/`): plays each movement out over a few milliseconds so Bluetooth's uneven timing doesn't show, adds in whatever your real trackpad did meanwhile, and posts ordinary mouse and keyboard events.
+- **Bluetooth**: the Mac advertises a service and the phone connects to it. The protocol is documented at the top of `Shared/Protocol.swift`.
+- **Security**: each device has its own key. Every connection is authenticated with a fresh key exchange, and all input is encrypted and protected against replay (`Shared/PairingAuth.swift`). Status messages from the Mac are not authenticated.
+
+Run the logic checks with `Tests/run.sh`.
 
 ## Credits
 
-Inspired by [WatchPointer](https://github.com/umarz317/WatchPointer) by umarz317. AimMac is a separate implementation written from scratch.
+Based on [AimMac](https://github.com/Coolerwave/AimMac), inspired by [WatchPointer](https://github.com/umarz317/WatchPointer) by umarz317.
 
 ## License
 

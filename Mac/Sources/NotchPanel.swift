@@ -1,22 +1,20 @@
 import AppKit
 
 /// Everything the panel shows. Filled in by AppDelegate.
-struct NotchModel {
+struct NotchModel: Equatable {
     enum Status { case noBluetooth, searching, waiting, live, paused }
     var status: Status = .searching
     var deviceName = ""
-    var deviceKind: DeviceKind?
+    var connected = false
     var model = ""
     var battery: Int?
-    var aim: CGPoint?
-    var displays: [CGRect] = []
     var macPaused = false
 }
 
 /// A black panel that hugs the notch (or the middle of the menu bar on Macs
 /// without one). It grows when the pointer hovers over it.
+@MainActor
 final class NotchPanel {
-    var onCenter: (() -> Void)?
     var onPause: (() -> Void)?
     var onGame: (() -> Void)?
     var model: () -> NotchModel = { NotchModel() }
@@ -26,7 +24,7 @@ final class NotchPanel {
     private var timer: Timer?
     private var expanded = false
     private var pinned = false
-    private var collapseWork: DispatchWorkItem?
+    private var collapseWork: Task<Void, Never>?
 
     func show() {
         let v = NotchView(frame: .zero)
@@ -45,69 +43,88 @@ final class NotchPanel {
         p.orderFrontRegardless()
         panel = p
 
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
-            self?.refresh()
-        }
+        scheduleTimer()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
-            self?.relayout(animated: false)
+            MainActor.assumeIsolated { self?.relayout(animated: false) }
         }
     }
 
-    private var tick = 0
-    private func refresh() {
-        tick += 1
-        // full speed while open, a couple of frames per second while closed
-        if expanded || tick % 10 == 0 {
-            view.model = model()
-            view.needsDisplay = true
+    /// Quick while open, slow while closed, and nothing is drawn unless something changed.
+    private func scheduleTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: expanded ? 0.25 : 1.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
         }
+    }
+
+    private func refresh() {
+        let m = model()
+        guard m != view.model else { return }
+        view.model = m
+        view.needsDisplay = true
     }
 
     // MARK: geometry
 
-    private var screen: NSScreen { NSScreen.screens.first ?? NSScreen.main! }
+    /// The notched display if there is one, otherwise the primary display.
+    private var screen: NSScreen? {
+        NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.screens.first
+    }
 
     /// Height of the menu bar strip (the notch is the same height).
     var barHeight: CGFloat {
-        let inset = screen.safeAreaInsets.top
+        let inset = screen?.safeAreaInsets.top ?? 0
         return inset > 0 ? inset : NSStatusBar.system.thickness
     }
 
     /// Width of the camera notch, 0 if there is none.
     var notchWidth: CGFloat {
-        guard screen.safeAreaInsets.top > 0,
-              let l = screen.auxiliaryTopLeftArea, let r = screen.auxiliaryTopRightArea else { return 0 }
+        guard let s = screen, s.safeAreaInsets.top > 0,
+              let l = s.auxiliaryTopLeftArea, let r = s.auxiliaryTopRightArea else { return 0 }
         return max(0, r.minX - l.maxX)
     }
 
+    /// What the collapsed strip leaves empty in its middle: the notch, or almost nothing.
+    var centerGap: CGFloat { max(notchWidth, 16) }
+
     private func collapsedFrame() -> NSRect {
-        let f = screen.frame
-        let w = max(notchWidth, 150) + 96
+        guard let f = screen?.frame else { return .zero }
+        let w = centerGap + 80
         return NSRect(x: f.midX - w / 2, y: f.maxY - barHeight, width: w, height: barHeight)
     }
 
     private func expandedFrame() -> NSRect {
-        let f = screen.frame
-        let w: CGFloat = max(440, notchWidth + 200)
-        let h: CGFloat = barHeight + 150
+        guard let f = screen?.frame else { return .zero }
+        let w: CGFloat = max(380, notchWidth + 200)
+        let h: CGFloat = barHeight + 118
         return NSRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h)
     }
 
     private func relayout(animated: Bool) {
         let target = expanded ? expandedFrame() : collapsedFrame()
-        view.expanded = expanded
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.22
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                panel.animator().setFrame(target, display: true)
-            }
-        } else {
-            panel.setFrame(target, display: true)
-        }
+        // Content appears after growing and disappears before shrinking, so it never overlaps mid-animation.
+        let showContent = expanded
+        if !showContent { view.expanded = false }
         view.model = model()
         view.needsDisplay = true
+        guard animated else {
+            panel.setFrame(target, display: true)
+            view.expanded = showContent
+            view.needsDisplay = true
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.22
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(target, display: true)
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.expanded == showContent else { return }
+                self.view.expanded = showContent
+                self.view.needsDisplay = true
+            }
+        })
     }
 
     // MARK: hover / buttons
@@ -115,21 +132,24 @@ final class NotchPanel {
     func hoverChanged(inside: Bool) {
         collapseWork?.cancel()
         if inside {
-            if !expanded { expanded = true; relayout(animated: true) }
+            if !expanded {
+                expanded = true
+                scheduleTimer()
+                relayout(animated: true)
+            }
         } else if !pinned {
-            let work = DispatchWorkItem { [weak self] in
-                guard let self = self, self.expanded, !self.pinned else { return }
+            collapseWork = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(450))
+                guard !Task.isCancelled, let self, self.expanded, !self.pinned else { return }
                 self.expanded = false
+                self.scheduleTimer()
                 self.relayout(animated: true)
             }
-            collapseWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
         }
     }
 
     func button(_ name: String) {
         switch name {
-        case "center": onCenter?()
         case "pause": onPause?()
         case "game": onGame?()
         case "pin":
@@ -148,6 +168,7 @@ final class NotchView: NSView {
     var pinned = false
     private var hoverButton: String?
     private var buttons: [(String, NSRect)] = []
+    private var symbolCache: [String: NSImage] = [:]
 
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -202,6 +223,17 @@ final class NotchView: NSView {
         }
     }
 
+    /// Tinted symbols are built once, not on every redraw.
+    private func symbol(_ name: String, size: CGFloat, weight: NSFont.Weight, color: NSColor) -> NSImage? {
+        let key = "\(name)|\(size)|\(weight.rawValue)|\(color.description)"
+        if let cached = symbolCache[key] { return cached }
+        let config = NSImage.SymbolConfiguration(pointSize: size, weight: weight)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        if let image { symbolCache[key] = image }
+        return image
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let r = bounds
         let radius: CGFloat = expanded ? 22 : 12
@@ -224,8 +256,7 @@ final class NotchView: NSView {
 
     /// Status dot on the left of the notch, battery on the right.
     private func drawCollapsedStrip(barH: CGFloat) {
-        let notchW = owner?.notchWidth ?? 0
-        let gap = max(notchW, 150)
+        let gap = owner?.centerGap ?? 16
         let leftX = (bounds.width - gap) / 2 - 36
         let rightX = (bounds.width + gap) / 2 + 8
 
@@ -239,7 +270,7 @@ final class NotchView: NSView {
         }
 
         let txt: String
-        if let b = model.battery { txt = "\(b)%" } else { txt = model.deviceKind == nil ? "" : "—" }
+        if let b = model.battery { txt = "\(b)%" } else { txt = model.connected ? "—" : "" }
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: dim,
@@ -253,19 +284,13 @@ final class NotchView: NSView {
         let y0 = top + 14
 
         // device line
-        let symbol = model.deviceKind == .phone ? "iphone" : (model.deviceKind == .watch ? "applewatch" : "dot.radiowaves.left.and.right")
-        if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 20, weight: .regular)) {
-            let tinted = img.copy() as! NSImage
-            tinted.lockFocus()
-            NSColor.white.set()
-            NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop)
-            tinted.unlockFocus()
-            tinted.draw(in: NSRect(x: pad, y: y0 + 2, width: tinted.size.width, height: tinted.size.height),
-                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        let glyph = model.connected ? "iphone" : "dot.radiowaves.left.and.right"
+        if let img = symbol(glyph, size: 20, weight: .regular, color: .white) {
+            img.draw(in: NSRect(x: pad, y: y0 + 2, width: img.size.width, height: img.size.height),
+                     from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
 
-        let title = model.deviceKind == nil ? "No device connected" : model.deviceName
+        let title = model.connected ? model.deviceName : "No device connected"
         NSAttributedString(string: title, attributes: [
             .font: NSFont.systemFont(ofSize: 14, weight: .semibold), .foregroundColor: NSColor.white,
         ]).draw(at: NSPoint(x: pad + 32, y: y0))
@@ -273,7 +298,7 @@ final class NotchView: NSView {
         var sub: [String] = []
         if !model.model.isEmpty { sub.append(model.model) }
         if let b = model.battery { sub.append("\(b)% battery") }
-        if model.deviceKind == nil { sub.append("Open AimMac on your iPhone or Apple Watch") }
+        if !model.connected { sub.append("Open Orbit Pointer on your iPhone") }
         NSAttributedString(string: sub.joined(separator: "  ·  "), attributes: [
             .font: NSFont.systemFont(ofSize: 11), .foregroundColor: dim,
         ]).draw(at: NSPoint(x: pad + 32, y: y0 + 19))
@@ -288,72 +313,32 @@ final class NotchView: NSView {
         NSBezierPath(roundedRect: pill, xRadius: 10, yRadius: 10).fill()
         pillText.draw(at: NSPoint(x: pill.minX + 10, y: pill.midY - pillText.size().height / 2))
 
-        // live aim map
-        let map = NSRect(x: pad, y: y0 + 46, width: 170, height: 78)
-        drawMap(in: map)
-
-        // buttons 2 x 2
-        let bw: CGFloat = 104, bh: CGFloat = 34, gap: CGFloat = 8
-        let bx = bounds.width - pad - bw * 2 - gap
-        let by = y0 + 46
+        // buttons
         let items: [(String, String, String)] = [
-            ("center", "scope", "Center"),
             ("pause", model.macPaused ? "play.fill" : "pause.fill", model.macPaused ? "Resume" : "Pause"),
             ("pin", pinned ? "pin.fill" : "pin", pinned ? "Pinned" : "Pin"),
             ("game", "gamecontroller", "Game"),
         ]
+        let gap: CGFloat = 8, bh: CGFloat = 34
+        let bw = (bounds.width - pad * 2 - gap * CGFloat(items.count - 1)) / CGFloat(items.count)
+        let by = y0 + 50
         for (i, it) in items.enumerated() {
-            let rect = NSRect(x: bx + CGFloat(i % 2) * (bw + gap), y: by + CGFloat(i / 2) * (bh + gap), width: bw, height: bh)
+            let rect = NSRect(x: pad + CGFloat(i) * (bw + gap), y: by, width: bw, height: bh)
             buttons.append((it.0, rect))
             let on = (it.0 == "pin" && pinned) || (it.0 == "pause" && model.macPaused)
-            let hover = hoverButton == it.0
-            NSColor(white: 1, alpha: hover ? 0.16 : 0.08).setFill()
+            NSColor(white: 1, alpha: hoverButton == it.0 ? 0.16 : 0.08).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10).fill()
             let color = on ? accent : NSColor.white
             let label = NSAttributedString(string: it.2, attributes: [
                 .font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: color,
             ])
             var x = rect.midX - (label.size().width + 20) / 2
-            if let img = NSImage(systemSymbolName: it.1, accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold)) {
-                let t = img.copy() as! NSImage
-                t.lockFocus(); color.set(); NSRect(origin: .zero, size: t.size).fill(using: .sourceAtop); t.unlockFocus()
-                t.draw(in: NSRect(x: x, y: rect.midY - t.size.height / 2, width: t.size.width, height: t.size.height),
-                       from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            if let img = symbol(it.1, size: 11, weight: .semibold, color: color) {
+                img.draw(in: NSRect(x: x, y: rect.midY - img.size.height / 2, width: img.size.width, height: img.size.height),
+                         from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
                 x += 20
             }
             label.draw(at: NSPoint(x: x, y: rect.midY - label.size().height / 2))
         }
-    }
-
-    /// Displays drawn to scale with the live aim point on top.
-    private func drawMap(in box: NSRect) {
-        NSColor(white: 1, alpha: 0.05).setFill()
-        NSBezierPath(roundedRect: box, xRadius: 10, yRadius: 10).fill()
-        let ds = model.displays
-        guard !ds.isEmpty else { return }
-        let u = ds.dropFirst().reduce(ds[0]) { $0.union($1) }
-        let inner = box.insetBy(dx: 10, dy: 10)
-        let s = min(inner.width / u.width, inner.height / u.height)
-        let ox = inner.midX - u.width * s / 2
-        let oy = inner.midY - u.height * s / 2
-        func map(_ p: CGPoint) -> NSPoint { NSPoint(x: ox + (p.x - u.minX) * s, y: oy + (p.y - u.minY) * s) }
-
-        for d in ds {
-            let o = map(d.origin)
-            let rr = NSRect(x: o.x, y: o.y, width: d.width * s, height: d.height * s).insetBy(dx: 1, dy: 1)
-            NSColor(white: 1, alpha: 0.10).setFill()
-            NSBezierPath(roundedRect: rr, xRadius: 3, yRadius: 3).fill()
-            NSColor(white: 1, alpha: 0.22).setStroke()
-            let b = NSBezierPath(roundedRect: rr, xRadius: 3, yRadius: 3)
-            b.lineWidth = 1
-            b.stroke()
-        }
-        guard let a = model.aim, model.status == .live || model.status == .paused else { return }
-        let p = map(a)
-        statusColor.withAlphaComponent(0.25).setFill()
-        NSBezierPath(ovalIn: NSRect(x: p.x - 7, y: p.y - 7, width: 14, height: 14)).fill()
-        statusColor.setFill()
-        NSBezierPath(ovalIn: NSRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)).fill()
     }
 }
