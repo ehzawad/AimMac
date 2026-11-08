@@ -21,7 +21,7 @@ No Wi-Fi and no servers: the phone talks straight to the Mac over Bluetooth, and
 
 The keyboard only opens from its button. While it's up, a row of keys gives you esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows; a modifier applies to the next key you press.
 
-Your real trackpad keeps working the whole time.
+Turn the phone sideways for a wide trackpad with the controls in a slim column; the keyboard works in both orientations. Your real trackpad keeps working the whole time.
 
 - **Pairing with a code.** The first time a phone connects, both screens show a six-digit code and the Mac asks you to allow it. Only allow it if the codes match.
 - **Notch panel.** Hover the notch (or the middle of the menu bar) to see the connected phone, its battery and quick buttons. Pin it to keep it open.

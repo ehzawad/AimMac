@@ -79,6 +79,14 @@ struct MacPicker: View {
     @Environment(RemoteSession.self) private var session
 
     var body: some View {
+        // Sideways there may not be room for everything, so it scrolls only then.
+        ViewThatFits(in: .vertical) {
+            content
+            ScrollView { content }
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Orbit Pointer").font(.system(size: 34, weight: .bold, design: .rounded))
             Text("Your iPhone becomes a trackpad and keyboard for your Mac. Pick the Mac to pair with.")
@@ -157,17 +165,20 @@ struct Notice: View {
 /// The whole app: a trackpad, and a button for the keyboard.
 struct RemoteView: View {
     @Environment(RemoteSession.self) private var session
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var showSettings = false
 
+    private var isLandscape: Bool { verticalSizeClass == .compact }
+
     var body: some View {
-        VStack(spacing: 12) {
-            header
-            trackpad
-            if session.keyboardShown { KeyRow() }
-            keyboardButton
+        Group {
+            if isLandscape { landscapeLayout } else { portraitLayout }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, isLandscape ? 8 : 16)
+        .padding(.vertical, isLandscape ? 8 : 12)
+        // Swipes starting at the screen's edge should move the pointer, not iOS.
+        .defersSystemGestures(on: .all)
+        .persistentSystemOverlays(isLandscape ? .hidden : .automatic)
         .background {
             KeyboardCapture(session: session, isActive: session.keyboardShown)
                 .frame(width: 0, height: 0)
@@ -176,30 +187,66 @@ struct RemoteView: View {
         .sheet(isPresented: $showSettings) { SettingsView() }
     }
 
-    private var header: some View {
+    private var portraitLayout: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                status
+                Spacer()
+                headerControl
+            }
+            trackpad
+            if session.keyboardShown { KeyRow() }
+            keyboardButton
+        }
+    }
+
+    /// As much trackpad as the screen allows, with the controls in a slim column.
+    private var landscapeLayout: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                trackpad
+                    .overlay(alignment: .topLeading) {
+                        status
+                            .padding(14)
+                            .allowsHitTesting(false)
+                    }
+                VStack(spacing: 8) {
+                    headerControl
+                    compactKeyboardButton
+                }
+                .frame(width: 64)
+            }
+            if session.keyboardShown { KeyRow() }
+        }
+    }
+
+    private var status: some View {
         HStack(spacing: 8) {
             Circle().fill(session.link.macPaused ? Color.orange : mint).frame(width: 8, height: 8)
                 .accessibilityHidden(true)
             Text(statusText).font(.subheadline.weight(.semibold))
-            Spacer()
-            if session.demo {
-                Button("Done") {
-                    session.keyboardShown = false
-                    session.endDrag()
-                    session.demo = false
-                }
-                .tint(.white)
-            } else {
-                Button {
-                    session.keyboardShown = false
-                    session.endDrag()
-                    showSettings = true
-                } label: {
-                    Image(systemName: "gearshape").font(.title3).frame(minWidth: 44, minHeight: 44)
-                }
-                .tint(.white)
-                .accessibilityLabel("Settings")
+        }
+    }
+
+    @ViewBuilder private var headerControl: some View {
+        if session.demo {
+            Button("Done") {
+                session.keyboardShown = false
+                session.endDrag()
+                session.demo = false
             }
+            .tint(.white)
+            .frame(minHeight: 44)
+        } else {
+            Button {
+                session.keyboardShown = false
+                session.endDrag()
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape").font(.title3).frame(minWidth: 44, minHeight: 44)
+            }
+            .tint(.white)
+            .accessibilityLabel("Settings")
         }
     }
 
@@ -240,13 +287,27 @@ struct RemoteView: View {
             .accessibilityAction(named: "Scroll down") { session.link.scroll(dx: 0, dy: -120) }
     }
 
+    private var keyboardLabel: some View {
+        Label(session.keyboardShown ? "Hide Keyboard" : "Keyboard",
+              systemImage: session.keyboardShown ? "keyboard.chevron.compact.down" : "keyboard")
+            .font(.headline)
+    }
+
     private var keyboardButton: some View {
         Button { session.keyboardShown.toggle() } label: {
-            Label(session.keyboardShown ? "Hide Keyboard" : "Keyboard",
-                  systemImage: session.keyboardShown ? "keyboard.chevron.compact.down" : "keyboard")
-                .font(.headline)
+            keyboardLabel
                 .frame(maxWidth: .infinity, minHeight: 56)
                 .background(session.keyboardShown ? mint.opacity(0.18) : panel, in: RoundedRectangle(cornerRadius: 18))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var compactKeyboardButton: some View {
+        Button { session.keyboardShown.toggle() } label: {
+            keyboardLabel
+                .labelStyle(.iconOnly)
+                .frame(maxWidth: .infinity, minHeight: 44, maxHeight: .infinity)
+                .background(session.keyboardShown ? mint.opacity(0.18) : panel, in: RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
     }
