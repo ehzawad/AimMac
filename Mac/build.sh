@@ -23,7 +23,7 @@ for arch in arm64 x86_64; do
     -target "$arch-apple-macos14.0" \
     -o "build/$EXE-$arch" \
     Sources/*.swift ../Shared/*.swift \
-    -framework AppKit -framework CoreBluetooth -framework ApplicationServices
+    -framework AppKit -framework CoreBluetooth -framework ApplicationServices -framework Carbon
 done
 lipo -create -output "$APP/Contents/MacOS/$EXE" "build/$EXE-arm64" "build/$EXE-x86_64"
 rm -f "build/$EXE-arm64" "build/$EXE-x86_64"
@@ -50,12 +50,10 @@ echo "Built $APP"
 case "${1:-}" in
   run)
     pkill -x "$EXE" 2>/dev/null || true
-    pkill -x AimMac 2>/dev/null || true
     open "$APP"
     ;;
   install)
     pkill -x "$EXE" 2>/dev/null || true
-    pkill -x AimMac 2>/dev/null || true
     rm -rf "/Applications/$NAME.app"
     cp -R "$APP" "/Applications/$NAME.app"
     open "/Applications/$NAME.app"

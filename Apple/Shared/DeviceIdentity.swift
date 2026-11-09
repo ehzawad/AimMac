@@ -22,7 +22,11 @@ enum DeviceIdentity {
            let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) {
             return key
         }
+        return replace()
+    }
 
+    /// A new key, so that every Mac treats this phone as a device it has never allowed.
+    static func replace() -> Curve25519.Signing.PrivateKey {
         let key = Curve25519.Signing.PrivateKey()
         var add = query
         add[kSecValueData as String] = key.rawRepresentation

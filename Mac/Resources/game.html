@@ -95,11 +95,12 @@ function start() {
 
 function end() {
   state = 'over';
-  if (score > best) { best = score; save('orbitpop.best', best); }
+  const newBest = score > best;
+  if (newBest) { best = score; save('orbitpop.best', best); }
   const acc = shots ? Math.round(hits / shots * 100) : 0;
   $('overlay').querySelector('h1').textContent = score;
   $('overlay').querySelectorAll('p')[0].textContent = `${hits} rings · ${acc}% accuracy`;
-  $('overlay').querySelectorAll('p')[1].textContent = score > 0 && score >= best ? 'New best!' : '';
+  $('overlay').querySelectorAll('p')[1].textContent = newBest ? 'New best!' : '';
   showBest();
   $('overlay').querySelector('.big').textContent = 'Click to play again';
   $('overlay').hidden = false; $('hud').hidden = true;
