@@ -27,8 +27,12 @@ final class MacLink: NSObject {
     private(set) var macPaused = false {
         didSet { if macPaused != oldValue { onChange?() } }
     }
-    /// Shown while the Mac is asking whether to allow this device.
+    /// Shown on first pairing, for the person to compare with the Mac's.
     private(set) var pairingCode: String?
+    /// The person has said the codes on the two screens are the same.
+    private(set) var codeConfirmed = false
+    /// The Mac says this device is allowed, pending the person's own check of the code.
+    private(set) var macApproved = false
     private(set) var hasPairedMac = false
 
     @ObservationIgnored var onChange: (@MainActor () -> Void)?
@@ -41,9 +45,9 @@ final class MacLink: NSObject {
 
     // Handshake packets, sent as they are.
     @ObservationIgnored private var handshakeQueue: [Data] = []
-    // Clicks and keys, in order, sealed as they go out. Never dropped: see `enqueue`.
+    // Clicks and keys, in order, sealed as they go out. See `enqueue` for when the link is too far behind.
     @ObservationIgnored private var events: [Data] = []
-    // Movement is coalesced, so congestion costs precision and not clicks.
+    // Movement is coalesced, so light congestion costs precision and not clicks.
     @ObservationIgnored private var pendingMove = (x: 0.0, y: 0.0)
     @ObservationIgnored private var pendingScroll = (x: 0.0, y: 0.0)
 
@@ -53,7 +57,7 @@ final class MacLink: NSObject {
     @ObservationIgnored private var connectionFailed = false
     @ObservationIgnored private var rejected = Set<UUID>()
 
-    @ObservationIgnored private let identity = DeviceIdentity.loadOrCreate()
+    @ObservationIgnored private var identity = DeviceIdentity.loadOrCreate()
     @ObservationIgnored private var ephemeral = Curve25519.KeyAgreement.PrivateKey()
     @ObservationIgnored private var clientNonce = Data()
     @ObservationIgnored private var commitment = Data()
@@ -92,6 +96,9 @@ final class MacLink: NSObject {
     // MARK: public
 
     func pair(_ mac: FoundMac) {
+        // Pairing always starts as a new device, so unpairing really does take
+        // away this phone's access: the Mac has to allow it again.
+        identity = DeviceIdentity.replace()
         pairedID = mac.id
         pairedName = mac.name
         pinnedMacKey = nil
@@ -114,6 +121,11 @@ final class MacLink: NSObject {
         found = []
         state = .searching
         scan()
+    }
+
+    func confirmCode() {
+        codeConfirmed = true
+        if macApproved, let p = peripheral, let macKey = verifiedMacKey { finishPairing(with: macKey, on: p) }
     }
 
     func move(dx: Double, dy: Double) {
@@ -258,7 +270,6 @@ final class MacLink: NSObject {
         w.bytes(commitment)
         w.string(UIDevice.current.name, max: min(60, limit - PairingAuth.helloHeaderLength))
         handshakeQueue.append(w.data)
-        queueInfo()
         flush()
         // A handshake that stalls, or approval nobody gives, ends rather than waits forever.
         handshakeTimeout?.cancel()
@@ -321,7 +332,15 @@ final class MacLink: NSObject {
         counter = 0
         challengeRead = false
         pairingCode = nil
+        codeConfirmed = false
+        macApproved = false
         macPaused = false
+    }
+
+    private func discardInput() {
+        events.removeAll()
+        pendingMove = (0, 0)
+        pendingScroll = (0, 0)
     }
 
     private func failConnection(_ p: CBPeripheral) {
@@ -347,6 +366,7 @@ final class MacLink: NSObject {
         guard value.count >= 2 else { return }
         let bytes = [UInt8](value)
         macPaused = bytes[1] != 0
+        if macPaused { discardInput() }  // nothing from before a pause may land after it
         if value.count > 2 { macName = String(decoding: bytes[2...], as: UTF8.self) }
         switch LinkState(rawValue: bytes[0]) ?? .waiting {
         case .waiting:
@@ -356,17 +376,30 @@ final class MacLink: NSObject {
             challengeRead = true
             p.readValue(for: c)
         case .approved:
-            // Only a Mac that has proved who it is can say we're approved.
             guard let macKey = verifiedMacKey else { return }
-            pinnedMacKey = macKey
-            pairedID = p.identifier
-            pairingCode = nil
-            handshakeTimeout?.cancel()
-            state = .ready
-            flush()
+            // Any device can sign a challenge and report approval. On first pairing,
+            // what proves this is the right Mac is the person seeing the same code on both.
+            guard pinnedMacKey != nil || codeConfirmed else {
+                macApproved = true
+                handshakeTimeout?.cancel()  // reconnecting now would lose the code the Mac showed
+                return
+            }
+            finishPairing(with: macKey, on: p)
         case .denied:
             state = .denied
         }
+    }
+
+    private func finishPairing(with macKey: Data, on p: CBPeripheral) {
+        let arriving = state != .ready
+        pinnedMacKey = macKey
+        pairedID = p.identifier
+        pairingCode = nil
+        macApproved = false
+        handshakeTimeout?.cancel()
+        state = .ready
+        if arriving { queueInfo() }
+        flush()
     }
 
     private func handleChallenge(_ value: Data, from p: CBPeripheral) {
@@ -395,7 +428,7 @@ final class MacLink: NSObject {
         }
         verifiedMacKey = macKey
         sessionKey = key
-        pairingCode = PairingAuth.code(handshake)
+        pairingCode = pinnedMacKey == nil ? PairingAuth.code(handshake) : nil
         state = .waitingApproval
         var w = PacketWriter(.proof)
         w.bytes(clientNonce)
@@ -480,7 +513,7 @@ extension MacLink: @MainActor CBCentralManagerDelegate {
 extension MacLink: @MainActor CBPeripheralDelegate {
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
         guard p === peripheral else { return }
-        // Connected to a Mac that isn't running the app yet: hang up and wait for it.
+        // No service: the Mac isn't running the app yet, or discovery failed. Hang up and try again.
         guard error == nil, let s = p.services?.first(where: { $0.uuid == TM.service }) else {
             failConnection(p)
             return
@@ -513,8 +546,9 @@ extension MacLink: @MainActor CBPeripheralDelegate {
         infoTimer?.invalidate()
         infoTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.queueInfo()
-                self?.flush()
+                guard let self, self.state == .ready else { return }
+                self.queueInfo()
+                self.flush()
             }
         }
     }

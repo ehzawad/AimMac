@@ -24,11 +24,11 @@ No Wi-Fi and no servers: the phone talks straight to the Mac over Bluetooth, and
 | Tap with three fingers | Look up |
 | **Keyboard** button | Type with the iPhone keyboard |
 
-The keyboard only opens from its button. While it's up, a row of keys gives you esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows; a modifier applies to the next key you press. What you type or dictate shows just above the keys, so you can catch mistakes from across the room.
+The keyboard only opens from its button. While it's up, a row of keys gives you esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows. ⌘ ⌥ ⌃ apply to the next key you press, and ⇧ capitalizes the next letter. What you type or dictate shows just above the keys, so you can catch mistakes from across the room. That includes passwords, so keep the phone out of view when you type one.
 
 Use it upright or turn the phone sideways for a wide trackpad with the controls in a slim column, and tap the rotation lock to stay in either one. The keyboard works in both. Your real trackpad keeps working the whole time.
 
-- **Pairing with a code.** The first time a phone connects, both screens show a six-digit code and the Mac asks you to allow it. Only allow it if the codes match.
+- **Pairing with a code.** The first time a phone connects, both screens show a six-digit code. If they're the same, click **Allow** on the Mac and tap **The codes match** on the iPhone. An iPhone you unpair has to be allowed again.
 - **Menu bar icon.** Everything on the Mac lives in one icon at the top right of the screen: the connected phone, its battery, Pause, Open at Login, Settings and Quit.
 - **Orbit Pop**, a small target game to try it on.
 
@@ -76,7 +76,7 @@ open AimMac.xcodeproj
 
 1. Sign with your Apple ID: create `Apple/Local.xcconfig` with your bundle prefix and Team ID (see `Apple/Config.xcconfig`), or just pick your Team in **Signing & Capabilities**.
 2. Choose your iPhone as the run destination and press **⌘R**. The first time, turn on **Developer Mode** on the iPhone (Settings › Privacy & Security) and trust your developer profile (Settings › General › VPN & Device Management).
-3. Open Orbit Pointer on the iPhone, tap **Pair** next to your Mac, check that the codes match, then click **Allow** on the Mac.
+3. Open Orbit Pointer on the iPhone and tap **Pair** next to your Mac. If the codes on both screens match, click **Allow** on the Mac and tap **The codes match** on the iPhone.
 
 ## Settings
 
@@ -84,14 +84,14 @@ Speed, smoothing, scroll direction and the round pointer are under **Settings** 
 
 ## Orbit Pop
 
-Click the menu bar icon and choose **Settings › Play the target game**. Press **F** for full screen. Rings shrink and fade; pop them before they collapse. Center hits score double, gold rings triple, and every hit in a row raises your combo.
+Click the menu bar icon and choose **Settings › Play the target game**. Press **F** for full screen. Rings shrink; pop them before they collapse. Center hits score double, gold rings triple, and hits in a row raise your combo up to ×8.
 
 ## How it works
 
 - **iPhone** (`Apple/`): a multi-touch surface turns fingers into relative moves, clicks and scrolls, and a key-capture view forwards the iPhone keyboard.
 - **Mac** (`Mac/`): plays each movement out over a few milliseconds so Bluetooth's uneven timing doesn't show, adds in whatever your real trackpad did meanwhile, and posts ordinary mouse and keyboard events.
 - **Bluetooth**: the Mac advertises a service and the phone connects to it. The protocol is documented at the top of `Shared/Protocol.swift`.
-- **Security**: each device has its own key. Every connection is authenticated with a fresh key exchange, and all input is encrypted and protected against replay (`Shared/PairingAuth.swift`). Status messages from the Mac are not authenticated.
+- **Security**: each device has its own key. Every connection is authenticated with a fresh key exchange, and all input is encrypted and protected against replay (`Shared/PairingAuth.swift`). The pairing handshake, the Mac's status messages, and the phone's name, model and battery level are not encrypted by the app.
 
 Run the logic checks with `Tests/run.sh`.
 

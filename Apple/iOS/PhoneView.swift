@@ -29,7 +29,7 @@ struct PhoneRoot: View {
         } else {
             switch session.link.state {
             case .bluetoothOff:
-                Notice(icon: "antenna.radiowaves.left.and.right.slash", title: "Bluetooth is off",
+                Notice(icon: "antenna.radiowaves.left.and.right.slash", title: "Bluetooth isn't available",
                        text: "Turn on Bluetooth and allow Orbit Pointer to use it in Settings.")
             case .searching where !session.link.hasPairedMac:
                 MacPicker()
@@ -42,7 +42,7 @@ struct PhoneRoot: View {
                 Notice(icon: "xmark.shield", title: "Not allowed",
                        text: "The Mac declined this iPhone.", unpair: true)
             case .identityMismatch:
-                Notice(icon: "exclamationmark.shield", title: "This isn't your Mac",
+                Notice(icon: "exclamationmark.shield", title: "Couldn't verify your Mac",
                        text: "A nearby device answered as your Mac but couldn't prove it. If you reinstalled Orbit Pointer on your Mac, pair it again.",
                        unpair: true)
             case .ready:
@@ -55,20 +55,48 @@ struct PhoneRoot: View {
 struct ApprovalNotice: View {
     @Environment(RemoteSession.self) private var session
 
+    private var macName: String {
+        session.link.macName.isEmpty ? "your Mac" : session.link.macName
+    }
+
+    private var instruction: String {
+        if session.link.codeConfirmed { return "Now click Allow on \(macName)." }
+        if session.link.macApproved { return "\(macName) allowed this iPhone. Finish only if it showed this code." }
+        return "\(macName) should show the same code. Click Allow there only if it does, then confirm here."
+    }
+
     var body: some View {
+        // Sideways there may not be room for everything.
+        ViewThatFits(in: .vertical) {
+            content
+            ScrollView { content }
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 14) {
             Image(systemName: "checkmark.shield").font(.system(size: 44)).foregroundStyle(mint)
                 .accessibilityHidden(true)
-            Text("Allow on your Mac").font(.title2.bold())
             if let code = session.link.pairingCode {
+                Text("Compare the codes").font(.title2.bold())
                 Text(code)
                     .font(.system(size: 48, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .accessibilityLabel("Pairing code \(code.map(String.init).joined(separator: " "))")
-                Text("Click Allow on \(session.link.macName.isEmpty ? "your Mac" : session.link.macName) only if it shows this code.")
+                Text(instruction)
                     .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                if !session.link.codeConfirmed {
+                    Button { session.link.confirmCode() } label: {
+                        Text("The codes match").bold().foregroundStyle(.black)
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                            .background(mint, in: RoundedRectangle(cornerRadius: 16))
+                    }
+                    .buttonStyle(.plain)
+                    Button("They don't match") { session.link.unpair() }
+                        .frame(minHeight: 44)
+                }
             } else {
-                Text("Confirming your Mac…").foregroundStyle(.secondary)
+                Text("Confirming your Mac…").font(.title2.bold())
             }
         }
         .padding(32)
@@ -79,7 +107,7 @@ struct MacPicker: View {
     @Environment(RemoteSession.self) private var session
 
     var body: some View {
-        // Sideways there may not be room for everything, so it scrolls only then.
+        // It scrolls only when there isn't room for everything.
         ViewThatFits(in: .vertical) {
             content
             ScrollView { content }
@@ -356,7 +384,7 @@ struct TypedPreview: View {
     }
 }
 
-/// Every trackpad gesture, available through VoiceOver's actions rotor.
+/// Clicks, scrolling and system gestures, available through VoiceOver's actions rotor.
 struct TrackpadAccessibility: ViewModifier {
     let session: RemoteSession
 
@@ -381,7 +409,7 @@ struct TrackpadAccessibility: ViewModifier {
     }
 }
 
-/// The Mac keys an iPhone keyboard doesn't have. Modifiers apply to the next key.
+/// The Mac keys an iPhone keyboard doesn't have.
 struct KeyRow: View {
     @Environment(RemoteSession.self) private var session
 

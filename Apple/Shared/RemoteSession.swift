@@ -76,7 +76,7 @@ final class RemoteSession {
         modifiers = []
         caretMoved()
         link.button(.left, down: true, startsDrag: true)
-        // The Mac lets go by itself if these stop, however the phone went away.
+        // The Mac lets go by itself if these stop.
         leaseTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(400))

@@ -106,6 +106,9 @@ enum MacKey {
         "_": "-", "+": "=", "{": "[", "}": "]", "|": "\\", ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`",
     ]
 
+    /// Every character with its own key, and that key's US position.
+    static var characterKeys: [Character: UInt8] { table }
+
     /// The key that types `c`, for shortcuts such as ⌘C.
     static func code(for c: Character) -> UInt8? {
         table[Character(c.lowercased())]

@@ -1,6 +1,7 @@
 // Checks the logic that doesn't need a device: packets, pairing, encryption and geometry.
 // Run with Tests/run.sh.
 
+import Carbon.HIToolbox
 import Foundation
 import CryptoKit
 import CoreGraphics
@@ -125,8 +126,9 @@ var u32Reader = PacketReader(u32Writer.data)
 u32Reader.skipKind()
 check(u32Reader.u32() == 0xDEADBEEF, "u32 round-trips")
 
-check(utf8Prefix("a🙂b", maxBytes: 3) == "a", "text is never cut inside a character")
-check(utf8Prefix("a🙂b", maxBytes: 5) == "a🙂", "text fits as much as it can")
+let fourByte = "\u{10348}"
+check(utf8Prefix("a\(fourByte)b", maxBytes: 3) == "a", "text is never cut inside a character")
+check(utf8Prefix("a\(fourByte)b", maxBytes: 5) == "a\(fourByte)", "text fits as much as it can")
 
 // Keys
 check(MacKey.code(for: "c") == 8 && MacKey.code(for: "C") == 8, "letters map to their keys in either case")
@@ -135,7 +137,28 @@ check(MacKey.chord(for: "+")?.code == 24 && MacKey.chord(for: "+")?.shift == tru
 check(MacKey.chord(for: "=")?.code == 24 && MacKey.chord(for: "=")?.shift == false, "unshifted symbols don't add Shift")
 check(MacKey.chord(for: "C")?.code == 8 && MacKey.chord(for: "C")?.shift == true, "capitals add Shift")
 check(MacKey.chord(for: "c")?.shift == false, "lowercase doesn't add Shift")
-check(MacKey.chord(for: "🙂") == nil, "emoji have no key")
+check(MacKey.chord(for: Character(fourByte)) == nil, "characters off the keyboard have no key")
+
+// Shortcuts on other keyboard layouts
+func installedLayout(_ id: String) -> Data? {
+    let filter = [kTISPropertyInputSourceID as String: id] as CFDictionary
+    guard let list = TISCreateInputSourceList(filter, true)?.takeRetainedValue() as? [TISInputSource],
+          let source = list.first else { return nil }
+    return KeyLayout.layoutData(of: source)
+}
+if let us = installedLayout("com.apple.keylayout.US") {
+    check(KeyLayout.shortcutKeys(layout: us).isEmpty, "nothing moves on a US keyboard")
+} else {
+    print("skip no US layout installed")
+}
+if let french = installedLayout("com.apple.keylayout.French") {
+    let moved = KeyLayout.shortcutKeys(layout: french)
+    check(moved[MacKey.code(for: "z")!] == 13, "Z is found where a French keyboard keeps it")
+    check(moved[MacKey.code(for: "w")!] == 6, "W is found where a French keyboard keeps it")
+    check(moved[MacKey.code(for: "c")!] == nil, "keys that stay put aren't moved")
+} else {
+    print("skip no French layout installed")
+}
 
 // Geometry
 let side = DisplayMap(rects: [CGRect(x: 0, y: 0, width: 1000, height: 800),

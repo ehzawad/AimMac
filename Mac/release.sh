@@ -16,26 +16,31 @@ if [[ -z "$IDENTITY" ]]; then
   exit 1
 fi
 
-SIGN_IDENTITY="$IDENTITY" ./build.sh
-
 NAME="Orbit Pointer"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Info.plist)"
 DMG="build/OrbitPointer-$VERSION.dmg"
+WORKING="build/OrbitPointer-$VERSION-unfinished.dmg"
 STAGE="build/dmg"
 
-rm -rf "$STAGE" "$DMG"
+# The release name only ever holds a finished file, so a failure can't leave one to upload by mistake.
+rm -f "$DMG" "$WORKING"
+
+SIGN_IDENTITY="$IDENTITY" ./build.sh
+
+rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -R "build/$NAME.app" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -quiet -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+hdiutil create -quiet -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO "$WORKING"
 rm -rf "$STAGE"
-codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+codesign --force --timestamp --sign "$IDENTITY" "$WORKING"
 
-echo "Notarizing ${DMG}"
-xcrun notarytool submit "$DMG" \
+echo "Notarizing ${WORKING}"
+xcrun notarytool submit "$WORKING" \
   --key "$HOME/.appstoreconnect/private_keys/AuthKey_$NOTARY_KEY_ID.p8" \
   --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --wait
 
-xcrun stapler staple "$DMG"
-spctl -a -vvv -t open --context context:primary-signature "$DMG"
+xcrun stapler staple "$WORKING"
+spctl -a -vvv -t open --context context:primary-signature "$WORKING"
+mv "$WORKING" "$DMG"
 echo "Ready: $DMG"

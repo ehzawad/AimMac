@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 import ServiceManagement
 
 @MainActor
@@ -61,6 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.applySettings() }
         }
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+            object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applySettings() }
+        }
 
         // The real trackpad moving while the phone does, so the two add up.
         let engine = self.engine
@@ -87,7 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
             speed: speeds[max(0, min(speeds.count - 1, speedIdx))],
             smoothing: smoothing[max(0, min(smoothing.count - 1, smoothingIdx))],
             reverseScroll: reverseScroll,
-            doubleClickInterval: NSEvent.doubleClickInterval))
+            doubleClickInterval: NSEvent.doubleClickInterval,
+            shortcutKeys: KeyLayout.currentShortcutKeys()))
     }
 
     // MARK: menu
@@ -121,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Receiv
             let battery = p.battery.map { String(format: " · %d%%", $0) } ?? ""
             item(p.name + battery, nil, enabled: false)
         } else {
-            item(receiver.bluetoothOn ? "No device connected" : "Bluetooth is off", nil, enabled: false)
+            item(receiver.bluetoothOn ? "No device connected" : "Bluetooth is off or not allowed", nil, enabled: false)
         }
         if !AXIsProcessTrusted() {
             item("Accessibility: not granted (click to open)", #selector(openAX))

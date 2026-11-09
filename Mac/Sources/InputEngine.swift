@@ -15,10 +15,12 @@ import Foundation
 final class InputEngine: @unchecked Sendable {
     struct Settings: Sendable {
         var speed = 1.0
-        /// How long a movement takes to play out, in seconds. Hides Bluetooth's uneven timing.
+        /// How gradually a movement plays out, as a time constant in seconds. Hides Bluetooth's uneven timing.
         var smoothing = 0.016
         var reverseScroll = false
         var doubleClickInterval = 0.5
+        /// Keys that the selected keyboard layout keeps somewhere other than the US position.
+        var shortcutKeys: [UInt8: UInt8] = [:]
     }
 
     /// Marks events we post, so they can be told apart from the real trackpad's.
@@ -399,8 +401,10 @@ final class InputEngine: @unchecked Sendable {
                 flags.insert(.maskSecondaryFn)
                 flags.insert(.maskNumericPad)
             }
+            let isShortcut = !modifiers.isDisjoint(with: [.command, .option, .control])
+            let target = isShortcut ? settings.shortcutKeys[code] ?? code : code
             for down in [true, false] {
-                guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: down) else { continue }
+                guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(target), keyDown: down) else { continue }
                 ev.flags = flags
                 ev.post(tap: .cghidEventTap)
             }

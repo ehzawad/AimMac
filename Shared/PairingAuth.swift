@@ -19,8 +19,9 @@ struct Handshake: Sendable {
 /// The code people compare on first pairing is only as strong as the rule that
 /// neither side can pick its randomness after seeing the other's. So the device
 /// commits to its nonce and keys in `hello`, and reveals the nonce only after
-/// the Mac has fixed its own. An attacker in the middle can no longer search
-/// for values that make the two screens agree.
+/// the Mac has fixed its own. An attacker in the middle gets one chance in a
+/// million per connection, with no way to search for values that make the
+/// two screens agree.
 enum PairingAuth {
     static let version: UInt8 = 4
     static let keyLength = 32
@@ -66,8 +67,8 @@ enum PairingAuth {
         transcript("orbit-pointer/v4/dev", h, includingNonce: true)
     }
 
-    /// A six-digit code both screens show the first time, so the person
-    /// approving can tell nobody is sitting between the two devices.
+    /// A six-digit code both screens show the first time, for the person
+    /// pairing to compare before either device trusts the other.
     static func code(_ h: Handshake) -> String {
         let digest = SHA256.hash(data: transcript("orbit-pointer/v4/code", h, includingNonce: true))
         let n = digest.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
